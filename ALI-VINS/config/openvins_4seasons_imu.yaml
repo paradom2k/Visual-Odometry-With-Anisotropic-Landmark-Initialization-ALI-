@@ -1,0 +1,45 @@
+%YAML:1.0
+# IMU noise calibration for the 4Seasons drive, in the format OpenVINS reads for `relative_config_imu`: an `imu0`
+# node.  This is a separate file from the camera-IMU extrinsics (relative_config_imucam) because the code asks for
+# them under two different keys, and only the camera one has a T_imu_cam entry.
+#
+# The four noise values come from the dataset's own IMU specification in conf/4seasons_fs_full.yaml:
+#   IMU.NoiseGyro  2.0e-04 -> gyroscope_noise_density
+#   IMU.GyroWalk   2.0e-05 -> gyroscope_random_walk
+#   IMU.NoiseAcc   5.0e-03 -> accelerometer_noise_density
+#   IMU.AccWalk    5.0e-04 -> accelerometer_random_walk
+#   IMU.Frequency 2000.0   -> update_rate
+#
+# The intrinsic matrices (Tw, Ta, R_IMUtoGYRO, R_IMUtoACC, Tg) are left at identity/zero: this dataset publishes an
+# IMU that has already been calibrated, and calib_imu_intrinsics is off in the estimator config, so these are the
+# values for "no further correction".  The `model: kalibr` line selects that interpretation; the other accepted
+# value is "rpng", which would instead apply these matrices as corrections.
+imu0:
+  model: "kalibr"
+  update_rate: 2000
+  time_offset: 0.0
+  gyroscope_noise_density: 2.0e-04
+  gyroscope_random_walk: 2.0e-05
+  accelerometer_noise_density: 5.0e-03
+  accelerometer_random_walk: 5.0e-04
+  Tw:
+    - [1.0, 0.0, 0.0]
+    - [0.0, 1.0, 0.0]
+    - [0.0, 0.0, 1.0]
+  Ta:
+    - [1.0, 0.0, 0.0]
+    - [0.0, 1.0, 0.0]
+    - [0.0, 0.0, 1.0]
+  R_IMUtoGYRO:
+    - [1.0, 0.0, 0.0]
+    - [0.0, 1.0, 0.0]
+    - [0.0, 0.0, 1.0]
+  R_IMUtoACC:
+    - [1.0, 0.0, 0.0]
+    - [0.0, 1.0, 0.0]
+    - [0.0, 0.0, 1.0]
+  Tg:
+    - [0.0, 0.0, 0.0]
+    - [0.0, 0.0, 0.0]
+    - [0.0, 0.0, 0.0]
+  rostopic: /imu_raw

@@ -1,0 +1,131 @@
+%YAML:1.0
+# OpenVINS estimator configuration for the 4Seasons drive.
+#
+# This is the format OpenVINS reads itself (ov_msckf::VioManagerOptions::print_and_load), adapted from its own
+# config/rpng_plane example rather than invented, so the key names are the ones the code looks for.  The calibration
+# lives in the file named by relative_config_imucam below; relative to this file's directory, and the path must use
+# forward slashes because ov_core::YamlParser derives the folder with find_last_of('/').
+#
+# The camera stream this project has extracted is already undistorted, so the calibration next door has zero
+# distortion coefficients and camera_model pinhole -- see the note at the top of that file.
+relative_config_imucam: openvins_4seasons_calib.yaml
+# The IMU noise model is a second external file: VioManagerOptions asks for it under its own key, and it carries no
+# camera data.  Writing it into the same file as the camera does not work -- the parser looks up a different node.
+relative_config_imu: openvins_4seasons_imu.yaml
+
+verbosity: "INFO"
+
+# --- estimator ----------------------------------------------------------------------------------------------
+use_fej: true
+integration: "rk4"
+use_stereo: false
+max_cameras: 1
+# The clone window.  At 30.3 Hz a window of 11 clones spans 0.36 s, which is a very short triangulation baseline:
+# feature depth -- and with it the metric scale -- is then barely observable, and the filter was free to inflate it.
+# Measured on the full fs_full drive with everything else identical: 11 clones gave RMS 3D 3076 m (path ratio 5.86,
+# the failure mode the project's own sol/*.score files show repeatedly); 25 clones (0.83 s) gave RMS 3D 14.6 m and
+# path ratio 0.987, and on 200 s of the test recording 20.2 m / 1.052.  The cost is a larger state and slower
+# propagation.  This is the value to revisit first for any new 30 Hz dataset.
+max_clones: 25
+max_slam: 50
+max_slam_in_update: 25
+max_msckf_in_update: 40
+dt_slam_delay: 1
+gravity_mag: 9.8409
+feat_rep_msckf: "GLOBAL_3D"
+feat_rep_slam: "ANCHORED_MSCKF_INVERSE_DEPTH"
+feat_rep_aruco: "ANCHORED_MSCKF_INVERSE_DEPTH"
+# Aruco tags are not used, but StateOptions asks for the key unconditionally and treats a missing one as a failed
+# configuration, which this project's driver turns into a refusal to run rather than a silent default.
+num_aruco: 0
+record_timing_information: false
+record_timing_filepath: "sol/openvins_timing.txt"
+
+# Calibration: our camera and IMU are fixed and were calibrated offline, so the extrinsics and intrinsics are held
+# fixed rather than re-estimated.  Turning these on lets the filter chase calibration error, which on a short window
+# mostly adds degrees of freedom for the error to hide in.
+calib_cam_extrinsics: false
+calib_cam_intrinsics: false
+calib_cam_timeoffset: false
+calib_imu_intrinsics: false
+calib_imu_g_sensitivity: false
+
+# --- initialisation -----------------------------------------------------------------------------------------
+# Determinism AND convergence.  The dynamic initialiser's Ceres solve is bounded both by iterations
+# (init_dyn_mle_max_iter) and by wall-clock time (init_dyn_mle_max_time).  With the old 0.05 s time cap the
+# truncation point depended on machine load, and identical commands produced different trajectories (on
+# fs_full's first 350 frames: 1.3 m spread in the first position; on the test recording, runs that produced
+# nothing at all).  With the cap raised but the ITERATION limit left at 50, the solve stopped before
+# converging on the harder windows: the test recording then scored a path ratio of 4.87 over 200 s against
+# 1.05 with 200 iterations.  So: 200 iterations, and a 5 s time cap that the iteration cap always beats
+# (~1 ms per iteration), which keeps the answer independent of machine load.
+init_dyn_use: true
+init_dyn_mle_opt_calib: false
+init_dyn_mle_max_iter: 200
+init_dyn_mle_max_time: 5.0
+init_dyn_mle_max_threads: 1
+init_dyn_num_pose: 6
+init_dyn_min_deg: 5.0
+init_dyn_inflation_ori: 10
+init_dyn_inflation_vel: 100
+init_dyn_inflation_bg: 10
+init_dyn_inflation_ba: 100
+init_dyn_min_rec_cond: 1.0e-12
+init_dyn_bias_g: [ 0.0, 0.0, 0.0 ]
+init_dyn_bias_a: [ 0.0, 0.0, 0.0 ]
+init_window_time: 2.0
+init_imu_thresh: 0.5
+init_max_disparity: 10.0
+init_max_features: 200
+
+# --- zero-velocity update -----------------------------------------------------------------------------------
+# Off: this is a drive, not a handheld or legged platform, and a wrongly detected zero-velocity would freeze the
+# propagation.
+try_zupt: false
+zupt_max_velocity: 0.1
+zupt_noise_multiplier: 10
+zupt_max_disparity: 0.5
+zupt_only_at_beginning: false
+zupt_chi2_multipler: 1
+
+# --- feature tracking ---------------------------------------------------------------------------------------
+use_klt: true
+use_mask: false
+use_aruco: false
+downsize_aruco: false
+num_pts: 300
+fast_threshold: 20
+grid_x: 6
+grid_y: 4
+min_px_dist: 15
+downsample_cameras: false
+# CLAHE because the 4Seasons frames are large and unevenly lit; the branch this replaces used CLAHE too, so it
+# keeps the comparison about the estimator rather than about the preprocessing.
+histogram_method: "CLAHE"
+knn_ratio: 0.70
+track_frequency: 30.0
+num_opencv_threads: 1
+multi_threading_pubs: false
+multi_threading_subs: false
+
+# --- noise --------------------------------------------------------------------------------------------------
+# From the dataset's own IMU specification (conf/4seasons_fs_full.yaml): NoiseGyro 2e-4, NoiseAcc 5e-3,
+# GyroWalk 2e-5, AccWalk 5e-4.  imu_noises true makes UpdaterOptions read these rather than the discrete defaults.
+up_msckf_sigma_px: 1.0
+up_msckf_chi2_multipler: 1.0
+up_slam_sigma_px: 1.0
+up_slam_chi2_multipler: 1.0
+up_aruco_sigma_px: 1.0
+up_aruco_chi2_multipler: 1.0
+
+# --- simulation (unused, present because the parser asks for these keys unconditionally) ---------------------
+sim_seed_state_init: 0
+sim_seed_preturb: 0
+sim_seed_measurements: 0
+sim_do_perturbation: false
+sim_traj_path: ""
+sim_distance_threshold: 1.5
+sim_freq_cam: 10
+sim_freq_imu: 400
+sim_min_feature_gen_dist: 2.0
+sim_max_feature_gen_dist: 5.0

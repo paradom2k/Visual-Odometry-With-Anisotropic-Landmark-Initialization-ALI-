@@ -1,0 +1,129 @@
+%YAML:1.0
+# OpenVINS estimator configuration for 4Seasons recording_2021-01-07_12-04-03 ("office loop 5").
+#
+# This is openvins_4seasons.yaml, the configuration the fs_full drive was run and
+# scored with, pointed at this recording's own calibration.  The estimator block is
+# byte-identical to that file on purpose: the point of a second recording is to
+# change the data, not the estimator, so anything that moves between the two runs is
+# the dataset's doing.  See the header of that file for what each key is and which
+# of them came from measurement.
+#
+# The one line that differs is relative_config_imucam, below.  relative_config_imu
+# is shared: the same IMU, 2000 Hz, same noise specification.
+relative_config_imucam: openvins_4seasons_office_calib.yaml
+relative_config_imu: openvins_4seasons_imu.yaml
+
+verbosity: "INFO"
+
+# --- estimator ----------------------------------------------------------------------------------------------
+use_fej: true
+integration: "rk4"
+use_stereo: false
+max_cameras: 1
+# The clone window.  At 30.3 Hz a window of 11 clones spans 0.36 s, which is a very short triangulation baseline:
+# feature depth -- and with it the metric scale -- is then barely observable, and the filter was free to inflate it.
+# Measured on the full fs_full drive with everything else identical: 11 clones gave RMS 3D 3076 m (path ratio 5.86,
+# the failure mode the project's own sol/*.score files show repeatedly); 25 clones (0.83 s) gave RMS 3D 14.6 m and
+# path ratio 0.987, and on 200 s of the test recording 20.2 m / 1.052.  The cost is a larger state and slower
+# propagation.  This is the value to revisit first for any new 30 Hz dataset.
+max_clones: 25
+max_slam: 50
+max_slam_in_update: 25
+max_msckf_in_update: 40
+dt_slam_delay: 1
+gravity_mag: 9.8409
+feat_rep_msckf: "GLOBAL_3D"
+feat_rep_slam: "ANCHORED_MSCKF_INVERSE_DEPTH"
+feat_rep_aruco: "ANCHORED_MSCKF_INVERSE_DEPTH"
+num_aruco: 0
+record_timing_information: false
+record_timing_filepath: "sol/openvins_timing.txt"
+
+# Calibration held fixed, as for fs_full: a short window with intrinsics free lets
+# the filter chase calibration error, and calib_cam_intrinsics is off for the same
+# reason there is no distortion left to find (the frames ship undistorted).
+calib_cam_extrinsics: false
+calib_cam_intrinsics: false
+calib_cam_timeoffset: false
+calib_imu_intrinsics: false
+calib_imu_g_sensitivity: false
+
+# --- initialisation -----------------------------------------------------------------------------------------
+# Determinism AND convergence.  The dynamic initialiser's Ceres solve is bounded both by iterations
+# (init_dyn_mle_max_iter) and by wall-clock time (init_dyn_mle_max_time).  With the old 0.05 s time cap the
+# truncation point depended on machine load, and identical commands produced different trajectories (on
+# fs_full's first 350 frames: 1.3 m spread in the first position; on the test recording, runs that produced
+# nothing at all).  With the cap raised but the ITERATION limit left at 50, the solve stopped before
+# converging on the harder windows: the test recording then scored a path ratio of 4.87 over 200 s against
+# 1.05 with 200 iterations.  So: 200 iterations, and a 5 s time cap that the iteration cap always beats
+# (~1 ms per iteration), which keeps the answer independent of machine load.
+init_dyn_use: true
+init_dyn_mle_opt_calib: false
+init_dyn_mle_max_iter: 200
+init_dyn_mle_max_time: 5.0
+init_dyn_mle_max_threads: 1
+init_dyn_num_pose: 6
+init_dyn_min_deg: 5.0
+init_dyn_inflation_ori: 10
+init_dyn_inflation_vel: 100
+init_dyn_inflation_bg: 10
+init_dyn_inflation_ba: 100
+init_dyn_min_rec_cond: 1.0e-12
+init_dyn_bias_g: [ 0.0, 0.0, 0.0 ]
+init_dyn_bias_a: [ 0.0, 0.0, 0.0 ]
+init_window_time: 2.0
+# 0.0 DISABLES the static initialiser on purpose.  This recording opens parked (0.24 m/s), so the static
+# branch fires the moment the car starts moving -- and a static initialisation seeds NO SLAM landmarks,
+# while this recording's features live ~0.35 s, just short of the 0.83 s clone window, so almost no new
+# ones can be created either.  The result was an update stream of 0-2 accepted features per frame and a
+# scale that inflated 2.7x (RMS 360 m).  With the static path disabled the dynamic initialiser runs on
+# the moving window, seeds 24-33 SLAM landmarks, and the same 60 s window scores RMS 11.2 m / ratio 1.066.
+init_imu_thresh: 0.0
+init_max_disparity: 10.0
+init_max_features: 200
+
+# --- zero-velocity update -----------------------------------------------------------------------------------
+try_zupt: false
+zupt_max_velocity: 0.1
+zupt_noise_multiplier: 10
+zupt_max_disparity: 0.5
+zupt_only_at_beginning: false
+zupt_chi2_multipler: 1
+
+# --- feature tracking ---------------------------------------------------------------------------------------
+use_klt: true
+use_mask: false
+use_aruco: false
+downsize_aruco: false
+num_pts: 300
+fast_threshold: 20
+grid_x: 6
+grid_y: 4
+min_px_dist: 15
+downsample_cameras: false
+histogram_method: "CLAHE"
+knn_ratio: 0.70
+track_frequency: 30.0
+num_opencv_threads: 1
+multi_threading_pubs: false
+multi_threading_subs: false
+
+# --- noise --------------------------------------------------------------------------------------------------
+up_msckf_sigma_px: 1.0
+up_msckf_chi2_multipler: 1.0
+up_slam_sigma_px: 1.0
+up_slam_chi2_multipler: 1.0
+up_aruco_sigma_px: 1.0
+up_aruco_chi2_multipler: 1.0
+
+# --- simulation (unused, present because the parser asks for these keys unconditionally) ---------------------
+sim_seed_state_init: 0
+sim_seed_preturb: 0
+sim_seed_measurements: 0
+sim_do_perturbation: false
+sim_traj_path: ""
+sim_distance_threshold: 1.5
+sim_freq_cam: 10
+sim_freq_imu: 400
+sim_min_feature_gen_dist: 2.0
+sim_max_feature_gen_dist: 5.0
