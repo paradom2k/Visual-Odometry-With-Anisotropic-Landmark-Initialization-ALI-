@@ -1,9 +1,9 @@
-// jo_vi_corner -- driver for the OpenVINS kernel.
+// openvins_ali -- driver for the OpenVINS kernel.
 //
 // Feeds a 4Seasons manifest plus its IMU csv into ov_msckf::VioManager and writes the resulting trajectory in the
 // scorer's format ("<timestamp> x y z"), which is what the rest of this project already consumes.
 //
-//   jo_vi_corner_openvins_run --manifest <file> --imu <file> --config <yaml> --out <trajectory>
+//   openvins_ali_run --manifest <file> --imu <file> --config <yaml> --out <trajectory>
 //                             [--frames N] [--start K] [--base-dir <dir>] [--quiet]
 //
 // This replaces the old VINS feature_tracker + hand-written g2o sliding window, which tracked well for ~30 s and
@@ -135,7 +135,7 @@ int main(int argc, char** argv) {
     else if (arg == "--quiet") verbose = false;
     else if (arg == "--help" || arg == "-h") {
       std::printf(
-          "jo_vi_corner_openvins_run -- drives the OpenVINS MSCKF kernel over a 4Seasons manifest.\n\n"
+          "openvins_ali_run -- drives the OpenVINS MSCKF kernel over a 4Seasons manifest.\n\n"
           "  --manifest <file>   \"<timestamp> <image path>\" per line\n"
           "  --config <yaml>     OpenVINS estimator configuration; it names its own calibration files\n"
           "  --imu <file>        \"t,gx,gy,gz,ax,ay,az\" per line\n"
@@ -144,7 +144,7 @@ int main(int argc, char** argv) {
           "  --frames N          stop after N frames (0 or absent = all)\n"
           "  --start K           skip the first K frames\n"
           "  --quiet             do not print the every-100-frames progress line\n\n"
-          "Normally run through bin/jo_vi_corner_app.exe, which builds this command line from a conf/ file.\n");
+          "Normally run through bin/openvins_ali_app.exe, which builds this command line from a conf/ file.\n");
       return 0;
     }
     else {

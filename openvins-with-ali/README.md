@@ -41,9 +41,9 @@ isotropic covariance.  The anisotropic system is Cholesky-whitened before
 The prebuilt executables are in `bin/`.  Run from the package root:
 
 ```bat
-bin\jo_vi_corner_app.exe --list
-bin\jo_vi_corner_app.exe --run conf\4seasons_full.conf
-bin\jo_vi_corner_app.exe --run conf\4seasons_office.conf
+bin\openvins_ali_app.exe --list
+bin\openvins_ali_app.exe --run conf\4seasons_full.conf
+bin\openvins_ali_app.exe --run conf\4seasons_office.conf
 ```
 
 The two configurations point at the 4Seasons files on the development machine.
@@ -59,7 +59,7 @@ set OV_WALPHA=1
 set OV_WCLAMP=0.5
 set OV_WGROUP=slam
 set OV_WINIT=1
-bin\jo_vi_corner_app.exe --run conf\4seasons_full.conf
+bin\openvins_ali_app.exe --run conf\4seasons_full.conf
 ```
 
 Leave `OV_WEIGHT` unset for the baseline.  `OV_NOISE=<grey-level sigma>` and

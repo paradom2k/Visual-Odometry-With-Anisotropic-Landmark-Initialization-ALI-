@@ -1,11 +1,11 @@
-// jo_vi_corner -- the application.
+// openvins_ali -- the application.
 //
 // Two front ends over one implementation:
 //
-//   jo_vi_corner_app.exe                     the window: pick a configuration from conf/, read what it points at,
+//   openvins_ali_app.exe                     the window: pick a configuration from conf/, read what it points at,
 //                                            press Run, watch the estimator's output, see the score
-//   jo_vi_corner_app.exe --list              print the configurations that were found, with their paths checked
-//   jo_vi_corner_app.exe --run <conf> [--no-score]
+//   openvins_ali_app.exe --list              print the configurations that were found, with their paths checked
+//   openvins_ali_app.exe --run <conf> [--no-score]
 //                                            run one configuration without a window
 //
 // The headless modes are not a separate afterthought: they drive the same RunConf, the same argument building and
@@ -545,7 +545,7 @@ bool g_echo_status_to_stdout = false;
 /// compared against it.
 std::string RunnerExecutable(const std::string& engine) {
   const std::string name =
-      engine == "openvins" ? "jo_vi_corner_openvins_run.exe" : "jo_vi_corner_run.exe";
+      engine == "openvins" ? "openvins_ali_run.exe" : "openvins_ali_run.exe";
   return JoinPath(ExecutableDirectory(), name);
 }
 
@@ -656,7 +656,7 @@ bool RunProcess(const std::string& command_line, const std::string& working_dire
   CloseHandle(write_end);  // the child holds its own copy; without this the read below never ends
   if (!created) {
     CloseHandle(read_end);
-    error = "cannot start " + command_line + " (is jo_vi_corner_run.exe in bin/?)";
+    error = "cannot start " + command_line + " (is openvins_ali_run.exe in bin/?)";
     return false;
   }
   g_current_child_process = process.hProcess;
@@ -872,7 +872,7 @@ RunResult ExecuteRun(RunConf& conf, const std::function<void(const std::string&)
   };
 
   std::ostringstream header;
-  header << "=== jo_vi_corner run ===\n";
+  header << "=== openvins_ali run ===\n";
   header << Describe(conf);
   header << "trajectory  : " << result.trajectory_path << "\n";
   header << "log         : " << result.log_path << "\n";
@@ -1064,7 +1064,7 @@ bool g_run_in_progress = false;
 void CycleReferenceMode();
 
 /// The reference file usually covers far more time than the estimate: the full-drive ground truth is 95 s while a
-/// 900-frame run is 30 s.  Drawing all of it makes the estimate a speck in the corner and the picture useless for
+/// 900-frame run is 30 s.  Drawing all of it makes the estimate a speck at the plot edge and the picture useless for
 /// judging shape or size, so by default the reference is cut to the window the estimate actually spans -- which is
 /// also the part the scorer compares against.
 Trajectory RestrictToTimeRange(const Trajectory& in, double first, double last) {
@@ -1381,7 +1381,7 @@ bool RegisterPlotClass(HINSTANCE instance) {
   std::memset(&plot_class, 0, sizeof(plot_class));
   plot_class.lpfnWndProc = PlotProc;
   plot_class.hInstance = instance;
-  plot_class.lpszClassName = "JoViCornerPlotWindow";
+  plot_class.lpszClassName = "OpenVinsAliPlotWindow";
   plot_class.hCursor = LoadCursor(nullptr, IDC_ARROW);
   plot_class.hbrBackground = nullptr;  // painted in WM_PAINT
   return RegisterClassA(&plot_class) != 0;
@@ -1511,7 +1511,7 @@ void StartRun() {
   if (g_app->running) return;
   RunConf* conf = SelectedConf();
   if (!conf) {
-    MessageBoxA(g_app->window, "Select a configuration first.", "jo_vi_corner", MB_OK | MB_ICONINFORMATION);
+    MessageBoxA(g_app->window, "Select a configuration first.", "openvins_ali", MB_OK | MB_ICONINFORMATION);
     return;
   }
 
@@ -1588,7 +1588,7 @@ void LoadTrajectoryFromDialog() {
     InvalidateRect(g_app->plot, nullptr, TRUE);
     SetStatus("plotting " + BaseName(file_name));
   } else {
-    MessageBoxA(g_app->window, message.c_str(), "jo_vi_corner", MB_OK | MB_ICONWARNING);
+    MessageBoxA(g_app->window, message.c_str(), "openvins_ali", MB_OK | MB_ICONWARNING);
   }
 }
 
@@ -1655,7 +1655,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
       const int right_x = margin + 260 + 12;
       CreateWindowA("STATIC", "Trajectory", WS_CHILD | WS_VISIBLE, right_x, margin, 400, 18, window, nullptr,
                     g_app->instance, nullptr);
-      g_app->plot = CreateWindowA("JoViCornerPlotWindow", nullptr,
+      g_app->plot = CreateWindowA("OpenVinsAliPlotWindow", nullptr,
                                   WS_CHILD | WS_VISIBLE | WS_BORDER | WS_TABSTOP, right_x, margin + 20, 600,
                                   300, window, reinterpret_cast<HMENU>(kPlotView), g_app->instance, nullptr);
 
@@ -1853,7 +1853,7 @@ int RunWindowed(HINSTANCE instance) {
   std::memset(&window_class, 0, sizeof(window_class));
   window_class.lpfnWndProc = WindowProc;
   window_class.hInstance = instance;
-  window_class.lpszClassName = "JoViCornerAppWindow";
+  window_class.lpszClassName = "OpenVinsAliAppWindow";
   window_class.hCursor = LoadCursor(nullptr, IDC_ARROW);
   window_class.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_BTNFACE + 1);
   if (!RegisterClassA(&window_class)) {
@@ -1865,7 +1865,7 @@ int RunWindowed(HINSTANCE instance) {
     return 1;
   }
 
-  HWND window = CreateWindowA("JoViCornerAppWindow", "jo_vi_corner - corner + optical-flow VI",
+  HWND window = CreateWindowA("OpenVinsAliAppWindow", "openvins_ali - OpenVINS-ALI",
                               WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 1240, 820, nullptr, nullptr,
                               instance, nullptr);
   if (!window) {
@@ -1951,7 +1951,7 @@ int main(int argc, char** argv) {
     else if (arg == "--plot" && has_next) g_startup_estimate = argv[++i];
     else if (arg == "--help" || arg == "-h") {
       std::printf(
-          "jo_vi_corner -- corner + optical-flow VI branch\n\n"
+          "openvins_ali -- OpenVINS-ALI branch\n\n"
           "  (no arguments)                  open the window: choose a configuration from conf/ and run it\n"
           "  --plot <traj> [--ref <ref>]     open the window already showing this trajectory\n"
           "  --list                          list the configurations found in conf/, with their paths checked\n"

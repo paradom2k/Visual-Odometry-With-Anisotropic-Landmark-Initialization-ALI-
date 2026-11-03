@@ -42,8 +42,8 @@ inert. The condition now covers both `p1` and `p1init`; `p1init` sets only
 | `src/openvins_run.cpp` | Manifest paths may contain spaces; optional reproducible image noise (`OV_NOISE`, `OV_SEED`); fail early when the estimator configuration is missing. |
 | `src/app_main.cpp` | Failed estimator runs no longer print or attempt to score a non-existent trajectory. |
 | `tools/gauge_free_score.py` | Missing estimate/reference files are reported directly instead of producing a Python traceback. |
-| `bin/jo_vi_corner_openvins_run.exe` | Rebuilt from the source above, including the ALI and d1 changes. |
-| `bin/jo_vi_corner_app.exe` | Application/driver launcher (no estimator changes). |
+| `bin/openvins_ali_run.exe` | Rebuilt from the source above, including the ALI and d1 changes. |
+| `bin/openvins_ali_app.exe` | Application/driver launcher (no estimator changes). |
 
 ## Vendored OpenVINS
 

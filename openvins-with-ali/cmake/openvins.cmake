@@ -24,73 +24,73 @@
 #           back to ceres::LocalParameterization, which 1.14 provides (ceres/manifold.h does not exist there).
 #   Boost   boost_1_92_0.  Its stage/lib already had date_time/thread/etc. but not filesystem, which OpenVINS does
 #           use (VioManager.cpp, VioManagerOptions.h, opencv_yaml_parse.h), so filesystem is built from that same
-#           local tree -- see the JO_BOOST_FILESYSTEM variable below.
+#           local tree -- see the ALI_BOOST_FILESYSTEM variable below.
 
-set(JO_OPENVINS_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/openvins" CACHE PATH
+set(ALI_OPENVINS_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/openvins" CACHE PATH
     "the ROS-free OpenVINS tree copied into this project")
 
-set(JO_CERES_ROOT "E:/jo_gvil/jo_gvil 1.0/github_prj/GraphRTK-INS-main/src/Third-party/ceres" CACHE PATH
+set(ALI_CERES_ROOT "E:/jo_gvil/jo_gvil 1.0/github_prj/GraphRTK-INS-main/src/Third-party/ceres" CACHE PATH
     "Ceres install root (contains include/ceres and lib/ceres.lib); needs glog beside it")
-set(JO_BOOST_ROOT "E:/jo_gvil/jo_gvil 1.0/github_prj/20261011/boost_1_92_0/boost_1_92_0" CACHE PATH
+set(ALI_BOOST_ROOT "E:/jo_gvil/jo_gvil 1.0/github_prj/20261011/boost_1_92_0/boost_1_92_0" CACHE PATH
     "Boost root (contains boost/ headers and stage/lib)")
-set(JO_BOOST_TOOLSET "vc143" CACHE STRING "Boost library name toolset tag")
-set(JO_BOOST_VERSION_TAG "1_92" CACHE STRING "Boost library name version tag")
+set(ALI_BOOST_TOOLSET "vc143" CACHE STRING "Boost library name toolset tag")
+set(ALI_BOOST_VERSION_TAG "1_92" CACHE STRING "Boost library name version tag")
 
 # ---------------------------------------------------------------- sources
 # Everything under each module's src/ except what was removed when the tree was copied.  Globbing here is
 # deliberate: the three modules are upstream code and their file set is not ours to maintain, so a file added or
 # removed upstream should not need a matching edit here.
-file(GLOB_RECURSE JO_OV_CORE_SOURCES "${JO_OPENVINS_ROOT}/ov_core/src/*.cpp")
-file(GLOB_RECURSE JO_OV_INIT_SOURCES "${JO_OPENVINS_ROOT}/ov_init/src/*.cpp")
-file(GLOB_RECURSE JO_OV_MSCKF_SOURCES "${JO_OPENVINS_ROOT}/ov_msckf/src/*.cpp")
-list(LENGTH JO_OV_CORE_SOURCES JO_OV_CORE_COUNT)
-list(LENGTH JO_OV_INIT_SOURCES JO_OV_INIT_COUNT)
-list(LENGTH JO_OV_MSCKF_SOURCES JO_OV_MSCKF_COUNT)
-message(STATUS "jo_vi_corner: OpenVINS sources -- ov_core ${JO_OV_CORE_COUNT}, ov_init ${JO_OV_INIT_COUNT}, "
-               "ov_msckf ${JO_OV_MSCKF_COUNT}")
+file(GLOB_RECURSE ALI_OV_CORE_SOURCES "${ALI_OPENVINS_ROOT}/ov_core/src/*.cpp")
+file(GLOB_RECURSE ALI_OV_INIT_SOURCES "${ALI_OPENVINS_ROOT}/ov_init/src/*.cpp")
+file(GLOB_RECURSE ALI_OV_MSCKF_SOURCES "${ALI_OPENVINS_ROOT}/ov_msckf/src/*.cpp")
+list(LENGTH ALI_OV_CORE_SOURCES ALI_OV_CORE_COUNT)
+list(LENGTH ALI_OV_INIT_SOURCES ALI_OV_INIT_COUNT)
+list(LENGTH ALI_OV_MSCKF_SOURCES ALI_OV_MSCKF_COUNT)
+message(STATUS "openvins_ali: OpenVINS sources -- ov_core ${ALI_OV_CORE_COUNT}, ov_init ${ALI_OV_INIT_COUNT}, "
+               "ov_msckf ${ALI_OV_MSCKF_COUNT}")
 
 # One library rather than three: the modules are compiled together upstream when ROS is absent (their own no-ROS
 # path appends ov_core's sources into each dependent library), and keeping them as one target avoids three
 # targets that would each have to be told the same include paths and definitions.
-add_library(jo_vi_corner_openvins STATIC
-  ${JO_OV_CORE_SOURCES}
-  ${JO_OV_INIT_SOURCES}
-  ${JO_OV_MSCKF_SOURCES}
+add_library(openvins_ali_core STATIC
+  ${ALI_OV_CORE_SOURCES}
+  ${ALI_OV_INIT_SOURCES}
+  ${ALI_OV_MSCKF_SOURCES}
 )
 
-target_include_directories(jo_vi_corner_openvins PUBLIC
-  "${JO_OPENVINS_ROOT}/ov_core/src"
-  "${JO_OPENVINS_ROOT}/ov_init/src"
-  "${JO_OPENVINS_ROOT}/ov_msckf/src"
-  "${JO_EIGEN_INCLUDE}"
-  "${JO_BOOST_ROOT}"
-  "${JO_CERES_ROOT}/include"
+target_include_directories(openvins_ali_core PUBLIC
+  "${ALI_OPENVINS_ROOT}/ov_core/src"
+  "${ALI_OPENVINS_ROOT}/ov_init/src"
+  "${ALI_OPENVINS_ROOT}/ov_msckf/src"
+  "${ALI_EIGEN_INCLUDE}"
+  "${ALI_BOOST_ROOT}"
+  "${ALI_CERES_ROOT}/include"
 )
-target_include_directories(jo_vi_corner_openvins SYSTEM PUBLIC "${JO_OPENCV_INCLUDE}")
+target_include_directories(openvins_ali_core SYSTEM PUBLIC "${ALI_OPENCV_INCLUDE}")
 
 # ROS_AVAILABLE=0 is what OpenVINS itself uses for the no-ROS build; ENABLE_ARUCO_TAGS=0 keeps TrackAruco from
 # including <opencv2/aruco.hpp>, which is in opencv_contrib and not in the install this project links.
-target_compile_definitions(jo_vi_corner_openvins PUBLIC
+target_compile_definitions(openvins_ali_core PUBLIC
   ROS_AVAILABLE=0
   ENABLE_ARUCO_TAGS=0
 )
 
 # Boost.Filesystem has to exist before this configure step.  They are separate variables rather than a glob so a
 # missing one fails the configure with a sentence instead of a wall of unresolved externals at link time.
-set(JO_BOOST_TAG "${JO_BOOST_TOOLSET}-mt-x64-${JO_BOOST_VERSION_TAG}")
-set(JO_BOOST_FILESYSTEM "${JO_BOOST_ROOT}/stage/lib/libboost_filesystem-${JO_BOOST_TAG}.lib")
-set(JO_BOOST_DATE_TIME "${JO_BOOST_ROOT}/stage/lib/libboost_date_time-${JO_BOOST_TAG}.lib")
-set(JO_BOOST_THREAD "${JO_BOOST_ROOT}/stage/lib/libboost_thread-${JO_BOOST_TAG}.lib")
+set(ALI_BOOST_TAG "${ALI_BOOST_TOOLSET}-mt-x64-${ALI_BOOST_VERSION_TAG}")
+set(ALI_BOOST_FILESYSTEM "${ALI_BOOST_ROOT}/stage/lib/libboost_filesystem-${ALI_BOOST_TAG}.lib")
+set(ALI_BOOST_DATE_TIME "${ALI_BOOST_ROOT}/stage/lib/libboost_date_time-${ALI_BOOST_TAG}.lib")
+set(ALI_BOOST_THREAD "${ALI_BOOST_ROOT}/stage/lib/libboost_thread-${ALI_BOOST_TAG}.lib")
 foreach(pair
-    "JO_BOOST_FILESYSTEM;${JO_BOOST_FILESYSTEM}"
-    "JO_BOOST_DATE_TIME;${JO_BOOST_DATE_TIME}"
-    "JO_BOOST_THREAD;${JO_BOOST_THREAD}"
-    "JO_CERES_LIBRARY;${JO_CERES_ROOT}/lib/ceres.lib")
+    "ALI_BOOST_FILESYSTEM;${ALI_BOOST_FILESYSTEM}"
+    "ALI_BOOST_DATE_TIME;${ALI_BOOST_DATE_TIME}"
+    "ALI_BOOST_THREAD;${ALI_BOOST_THREAD}"
+    "ALI_CERES_LIBRARY;${ALI_CERES_ROOT}/lib/ceres.lib")
   list(GET pair 0 name)
   list(GET pair 1 path)
   if(NOT EXISTS "${path}")
     message(FATAL_ERROR
-      "jo_vi_corner: ${name} not found at ${path}\n"
+      "openvins_ali: ${name} not found at ${path}\n"
       "  Boost.Filesystem is not built by the workspace's Boost build; build it from the same source tree with:\n"
       "    b2 --with-filesystem variant=release link=static runtime-link=shared threading=multi address-model=64 stage\n"
       "  (with TMP/TEMP pointed at a writable directory -- b2 fails with \"failed to write command file!\" otherwise)")
@@ -98,13 +98,13 @@ foreach(pair
 endforeach()
 
 # glog is a hard dependency of a Ceres shared build: ceres.lib's link interface names glog.lib.
-target_link_libraries(jo_vi_corner_openvins PUBLIC
-  ${JO_OPENCV_LIBS}
-  "${JO_CERES_ROOT}/lib/ceres.lib"
-  "${JO_CERES_ROOT}/lib/glog.lib"
-  "${JO_BOOST_FILESYSTEM}"
-  "${JO_BOOST_DATE_TIME}"
-  "${JO_BOOST_THREAD}"
+target_link_libraries(openvins_ali_core PUBLIC
+  ${ALI_OPENCV_LIBS}
+  "${ALI_CERES_ROOT}/lib/ceres.lib"
+  "${ALI_CERES_ROOT}/lib/glog.lib"
+  "${ALI_BOOST_FILESYSTEM}"
+  "${ALI_BOOST_DATE_TIME}"
+  "${ALI_BOOST_THREAD}"
 )
 
 if(MSVC)
@@ -119,8 +119,8 @@ if(MSVC)
   # What was actually needed is M_PI (Propagator.cpp, DynamicInitializer.cpp, quat_ops.h), and MSVC's <cmath>
   # defines that under _USE_MATH_DEFINES.  NOMINMAX and WIN32_LEAN_AND_MEAN are set too, because Ceres or glog may
   # pull windows.h in transitively and std::min/std::max are used throughout.
-  target_compile_options(jo_vi_corner_openvins PRIVATE /EHsc /utf-8 /bigobj /MP)
-  target_compile_definitions(jo_vi_corner_openvins PRIVATE
+  target_compile_options(openvins_ali_core PRIVATE /EHsc /utf-8 /bigobj /MP)
+  target_compile_definitions(openvins_ali_core PRIVATE
     _CRT_SECURE_NO_WARNINGS
     _USE_MATH_DEFINES
     NOMINMAX
