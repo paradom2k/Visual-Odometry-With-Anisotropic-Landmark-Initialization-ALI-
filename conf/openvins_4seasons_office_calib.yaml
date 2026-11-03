@@ -1,0 +1,38 @@
+%YAML:1.0
+# Camera-IMU calibration for 4Seasons recording_2021-01-07_12-04-03 ("office loop 5"), in the format
+# ov_core::YamlParser reads for `relative_config_imucam`: a `cam<N>` node.
+#
+# Provenance, all from the recording itself (this folder ships its own calibration):
+#   intrinsics        <- KeyFrameData/KeyFrame_<stamp>.txt line 2: fx, fy, cx, cy, width, height
+#                        (501.477509, 501.475769, 421.800629, 167.658478, 800, 400)
+#   distortion_coeffs <- ZERO, because the frames in undistorted_images/ were already undistorted
+#                        when the recording was released.  Writing the lens' real coefficients here
+#                        would undistort a second time; this is the same decision (and the same
+#                        reason) as in openvins_4seasons_calib.yaml for the fs_full drive.
+#   T_imu_cam         <- Transformations.txt, "# TS_cam_imu", converted from translation +
+#                        quaternion to a 4x4 matrix.  t = (0.175412, 0.003689, -0.058106),
+#                        q = (-0.007202, 0.708623, -0.705546, -0.002350).
+#
+# The conversion and the convention were both checked, not assumed: applying it to the fs_full
+# recording (recording_2020-10-07_14-53-52, which carries the same block) reproduces the matrix in
+# openvins_4seasons_calib.yaml to 8e-7 -- the matrix that was chosen there by measurement, as the
+# inverse of IMU.T_b_c1 being 3.9x better than the value written under the key's name.  All three
+# recordings share one camera-IMU rig, and their TS_cam_imu blocks are identical to six decimals,
+# so one calibration serves them; only the intrinsics below are taken per recording.
+#
+# Reproduce the check with tools/e1_extract/b_check_extrinsics.py.
+
+cam0:
+  camera_model: pinhole
+  distortion_model: radtan
+  intrinsics: [501.477509, 501.475769, 421.800629, 167.658478]
+  distortion_coeffs: [0.0, 0.0, 0.0, 0.0]
+  resolution: [800, 400]
+  timeshift_cam_imu: 0.0
+  T_imu_cam:
+    - [-0.9998852173, -0.0135230840, 0.0068321626, 0.1754120000]
+    - [-0.0068909457, 0.0043050556, -0.9999669901, 0.0036890000]
+    - [0.0134932248, -0.9998992913, -0.0043977483, -0.0581060000]
+    - [0.0000000000, 0.0000000000, 0.0000000000, 1.0000000000]
+  cam_overlaps: []
+  rostopic: /camera/image_raw

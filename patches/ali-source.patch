@@ -1,0 +1,1492 @@
+diff --git a/conf/openvins_4seasons.yaml b/conf/openvins_4seasons.yaml
+index ab2dcc4..749290b 100644
+--- a/conf/openvins_4seasons.yaml
++++ b/conf/openvins_4seasons.yaml
+@@ -20,7 +20,13 @@ use_fej: true
+ integration: "rk4"
+ use_stereo: false
+ max_cameras: 1
+-max_clones: 11
++# The clone window.  At 30.3 Hz a window of 11 clones spans 0.36 s, which is a very short triangulation baseline:
++# feature depth -- and with it the metric scale -- is then barely observable, and the filter was free to inflate it.
++# Measured on the full fs_full drive with everything else identical: 11 clones gave RMS 3D 3076 m (path ratio 5.86,
++# the failure mode the project's own sol/*.score files show repeatedly); 25 clones (0.83 s) gave RMS 3D 14.6 m and
++# path ratio 0.987, and on 200 s of the test recording 20.2 m / 1.052.  The cost is a larger state and slower
++# propagation.  This is the value to revisit first for any new 30 Hz dataset.
++max_clones: 25
+ max_slam: 50
+ max_slam_in_update: 25
+ max_msckf_in_update: 40
+@@ -45,14 +51,18 @@ calib_imu_intrinsics: false
+ calib_imu_g_sensitivity: false
+ 
+ # --- initialisation -----------------------------------------------------------------------------------------
+-# Dynamic initialisation, not the static one.  The static initialiser needs a couple of seconds of near-stationary
+-# data to detect a "jerk"; the reference trajectory for this drive is already moving at 6.19 m/s on average from the
+-# recorded start, so there is no reliable stationary window to key off.  The dynamic path solves for the initial
+-# state from visual and inertial measurements instead, which is what Ceres is linked for.
++# Determinism AND convergence.  The dynamic initialiser's Ceres solve is bounded both by iterations
++# (init_dyn_mle_max_iter) and by wall-clock time (init_dyn_mle_max_time).  With the old 0.05 s time cap the
++# truncation point depended on machine load, and identical commands produced different trajectories (on
++# fs_full's first 350 frames: 1.3 m spread in the first position; on the test recording, runs that produced
++# nothing at all).  With the cap raised but the ITERATION limit left at 50, the solve stopped before
++# converging on the harder windows: the test recording then scored a path ratio of 4.87 over 200 s against
++# 1.05 with 200 iterations.  So: 200 iterations, and a 5 s time cap that the iteration cap always beats
++# (~1 ms per iteration), which keeps the answer independent of machine load.
+ init_dyn_use: true
+ init_dyn_mle_opt_calib: false
+-init_dyn_mle_max_iter: 50
+-init_dyn_mle_max_time: 0.05
++init_dyn_mle_max_iter: 200
++init_dyn_mle_max_time: 5.0
+ init_dyn_mle_max_threads: 1
+ init_dyn_num_pose: 6
+ init_dyn_min_deg: 5.0
+diff --git a/src/app_main.cpp b/src/app_main.cpp
+index 293514a..ff35ea1 100644
+--- a/src/app_main.cpp
++++ b/src/app_main.cpp
+@@ -906,6 +906,21 @@ RunResult ExecuteRun(RunConf& conf, const std::function<void(const std::string&)
+   log(finished.str());
+   AppendToFile(result.log_path, finished.str());
+ 
++  // A run that produced no trajectory is not scored, and "no score" is not a good enough report: the
++  // scorer would be handed a path that does not exist and answer with a Python traceback, which reads
++  // like a bug in the scorer rather than a failed estimator.  This is the path a deliberately
++  // unrunnable configuration takes (conf/kitti_00.conf and conf/gici_1_1.conf point `settings` at a
++  // file that does not exist yet), so the message has to be the one that explains the situation.
++  if (result.exit_code != 0) {
++    std::ostringstream note;
++    note << "\n[app] the estimator did not finish, so there is nothing to score.\n"
++            "      Check the detail above: a settings file marked [MISSING], a run with no inertial\n"
++            "      data, or a frame in the manifest that cannot be read.\n";
++    log(note.str());
++    AppendToFile(result.log_path, note.str());
++    return result;
++  }
++
+   if (score) {
+     std::string score_output;
+     std::string reason;
+@@ -967,8 +982,16 @@ int RunHeadless(const std::string& conf_argument, bool score, int frame_override
+       score, frame_override);
+ 
+   if (!result.started) return 3;
+-  std::printf("\n[app] solution written:\n  %s\n  %s\n", result.trajectory_path.c_str(), result.log_path.c_str());
+-  if (result.scored) std::printf("  %s\n", result.score_path.c_str());
++  // Only claim a solution when there is one.  A failed estimator leaves no trajectory file, and
++  // printing "solution written" over a path that does not exist sent a reader looking for it.
++  if (result.exit_code == 0) {
++    std::printf("\n[app] solution written:\n  %s\n  %s\n", result.trajectory_path.c_str(),
++                result.log_path.c_str());
++    if (result.scored) std::printf("  %s\n", result.score_path.c_str());
++  } else {
++    std::printf("\n[app] no solution: the estimator exited with code %d\n  log: %s\n",
++                result.exit_code, result.log_path.c_str());
++  }
+   return static_cast<int>(result.exit_code);
+ }
+ 
+diff --git a/src/openvins_run.cpp b/src/openvins_run.cpp
+index 4596d66..a786c0e 100644
+--- a/src/openvins_run.cpp
++++ b/src/openvins_run.cpp
+@@ -56,7 +56,17 @@ std::vector<ManifestEntry> readManifest(const std::string& path, const std::stri
+     if (line.empty() || line[0] == '#') continue;
+     std::istringstream parser(line);
+     ManifestEntry entry;
+-    if (!(parser >> entry.time >> entry.path)) continue;
++    if (!(parser >> entry.time)) continue;
++    // The path is everything after the timestamp, not the next whitespace-delimited
++    // token: dataset directories contain spaces ("D:\driving dataset\COMPUTER VISION
++    // GROUP\..."), and reading a token truncated the path to "D:/driving", which
++    // surfaced as cv::imread failing on the first frame.  This is the same rule the
++    // statistics tool's readManifest uses, so one manifest works for both.
++    std::getline(parser, entry.path);
++    const std::size_t first = entry.path.find_first_not_of(" \t\r\n");
++    if (first == std::string::npos) continue;
++    const std::size_t last = entry.path.find_last_not_of(" \t\r\n");
++    entry.path = entry.path.substr(first, last - first + 1);
+     if (index++ < start) continue;
+     // A drive-letter path is already absolute; the runner must not prefix it.
+     if (!(entry.path.size() > 1 && entry.path[1] == ':')) entry.path = base + entry.path;
+@@ -150,6 +160,18 @@ int main(int argc, char** argv) {
+     return 2;
+   }
+ 
++  // The configuration is checked first, before the manifest and the IMU are read.  It is the one
++  // input whose absence is fatal and unambiguous, and two configurations in conf/ deliberately point
++  // at a file that does not exist yet (kitti_00, gici_1_1 -- no inertial data for either), so the
++  // first line of such a run should be the reason, not a warning about the IMU that follows it.
++  {
++    std::ifstream probe(config.c_str());
++    if (!probe) {
++      std::fprintf(stderr, "[E] cannot open the configuration file %s\n", config.c_str());
++      return 1;
++    }
++  }
++
+   const std::vector<ManifestEntry> entries = readManifest(manifest, base_dir, start, frames);
+   if (entries.empty()) {
+     std::fprintf(stderr, "[E] no frames in %s\n", manifest.c_str());
+@@ -223,6 +245,25 @@ int main(int argc, char** argv) {
+       return 1;
+     }
+ 
++    // Optional additive Gaussian noise, for the experiment ensemble: OV_NOISE=<sigma in grey levels>,
++    // OV_SEED=<integer>.  Seeded per (seed, frame) so a run reproduces exactly, and inactive unless the
++    // variable is set -- every ordinary run is bit-identical to before.
++    {
++      const char *ns = std::getenv("OV_NOISE");
++      const double sigma = ns ? std::atof(ns) : 0.0;
++      if (sigma > 0.0) {
++        const char *ss = std::getenv("OV_SEED");
++        const unsigned seed = (unsigned)(ss ? std::atoi(ss) : 0) * 7919u + (unsigned)i;
++        cv::Mat noise(image.size(), CV_16S);
++        cv::RNG rng(seed);
++        rng.fill(noise, cv::RNG::NORMAL, 0.0, sigma);
++        cv::Mat wide;
++        image.convertTo(wide, CV_16S);
++        wide += noise;
++        wide.convertTo(image, CV_8U);
++      }
++    }
++
+     ov_core::CameraData message;
+     message.timestamp = stamp;
+     message.sensor_ids.push_back(0);
+diff --git a/thirdparty/openvins/ov_core/src/feat/Feature.h b/thirdparty/openvins/ov_core/src/feat/Feature.h
+index f0bd8a8..34c4af3 100644
+--- a/thirdparty/openvins/ov_core/src/feat/Feature.h
++++ b/thirdparty/openvins/ov_core/src/feat/Feature.h
+@@ -45,6 +45,22 @@ public:
+   /// If this feature should be deleted
+   bool to_delete;
+ 
++  /// Measurement-noise multiplier for this feature (1 = the estimator's nominal sigma).  Set by the
++  /// frontend from a quality statistic: lambda2 at birth (the KLT displacement covariance is
++  /// 2*sigma^2*M^-1, so a stronger corner deserves a smaller sigma) or the forward-backward error of
++  /// the track.  The MSCKF/SLAM updaters scale the per-feature measurement covariance by its square.
++  double sigma_mult = 1.0;
++
++  /// Extra multiplier used only when the SLAM landmark is initialized (1 = nominal).  This
++  /// separates a static geometric prior (e.g. lambda2) from a per-frame measurement prior
++  /// (e.g. forward-backward error) stored in sigma_mult.
++  double sigma_mult_init = 1.0;
++
++  /// Anisotropic pixel covariance multiplier used only for landmark initialization
++  /// (identity = nominal).  This preserves the two KLT uncertainty directions, which a
++  /// scalar sigma multiplier cannot represent.
++  Eigen::Matrix2d init_cov = Eigen::Matrix2d::Identity();
++
+   /// UV coordinates that this feature has been seen from (mapped by camera ID)
+   std::unordered_map<size_t, std::vector<Eigen::VectorXf>> uvs;
+ 
+diff --git a/thirdparty/openvins/ov_core/src/track/TrackKLT.cpp b/thirdparty/openvins/ov_core/src/track/TrackKLT.cpp
+index d2fe388..43ffa24 100644
+--- a/thirdparty/openvins/ov_core/src/track/TrackKLT.cpp
++++ b/thirdparty/openvins/ov_core/src/track/TrackKLT.cpp
+@@ -29,8 +29,212 @@
+ #include "utils/opencv_lambda_body.h"
+ #include "utils/print.h"
+ 
++#include <algorithm>
++#include <cmath>
++#include <cstdlib>
++#include <cstdio>
++#include <unordered_set>
++#include <limits>
++
+ using namespace ov_core;
+ 
++// ===================================================================================================================
++// Experiment C: rank the detected candidates by a statistic instead of the detector's own response.
++//
++// The integration point is deliberately the smallest one: Grider_GRID still decides WHICH cells get
++// features (the coverage constraint the plan requires), and the only thing that changes is which
++// candidates fill a cell.  The pool is over-sampled 3x so that the cell's choice is not a FAST
++// preselection, and the same over-sampling is used for every branch including the random one, so the
++// branches differ in the ranking and in nothing else.
++//
++// The orientation of each statistic is the one the offline table used (fixed from fs_full in Phase A):
++// lambda2 and Foerstner prefer large values, CSR and the characteristic scale are inverted (the offline
++// AUC of both is below 0.5, i.e. the direction the previous paper published points the wrong way on
++// this data).
++// ===================================================================================================================
++namespace {
++
++inline void eig2(double a, double b, double c, double &l1, double &l2) {
++  const double tr = 0.5 * (a + c);
++  const double d = std::sqrt(std::max(0.0, 0.25 * (a - c) * (a - c) + b * b));
++  l1 = tr + d;
++  l2 = tr - d;
++}
++
++/// Eigenvalues of the structure tensor over a (2*half+1)^2 window centred on (x,y).
++bool tensor_eig(const cv::Mat &Ix, const cv::Mat &Iy, int x, int y, int half, double &l1, double &l2) {
++  if (x - half < 0 || y - half < 0 || x + half >= Ix.cols || y + half >= Ix.rows)
++    return false;
++  double a = 0.0, b = 0.0, c = 0.0;
++  for (int dy = -half; dy <= half; ++dy) {
++    const float *px = Ix.ptr<float>(y + dy) + (x - half);
++    const float *py = Iy.ptr<float>(y + dy) + (x - half);
++    for (int dx = 0; dx < 2 * half + 1; ++dx) {
++      const double gx = px[dx], gy = py[dx];
++      a += gx * gx;
++      b += gx * gy;
++      c += gy * gy;
++    }
++  }
++  eig2(a, b, c, l1, l2);
++  return true;
++}
++
++/// Anisotropic pixel covariance C ~= ref * M^{-1}, normalised to a running reference
++/// and clipped so the SLAM initialization cannot be dominated by one direction.
++bool tensor_cov(const cv::Mat &Ix, const cv::Mat &Iy, int x, int y, int half, double ref,
++                Eigen::Matrix2d &C) {
++  if (x - half < 0 || y - half < 0 || x + half >= Ix.cols || y + half >= Ix.rows)
++    return false;
++  double a = 0.0, b = 0.0, c = 0.0;
++  for (int dy = -half; dy <= half; ++dy) {
++    const float *px = Ix.ptr<float>(y + dy) + (x - half);
++    const float *py = Iy.ptr<float>(y + dy) + (x - half);
++    for (int dx = 0; dx < 2 * half + 1; ++dx) {
++      const double gx = px[dx], gy = py[dx];
++      a += gx * gx;
++      b += gx * gy;
++      c += gy * gy;
++    }
++  }
++  double l1 = 0.0, l2 = 0.0;
++  eig2(a, b, c, l1, l2);
++  if (l1 <= 1e-12 || l2 <= 1e-12 || ref <= 1e-12)
++    return false;
++  const double theta = 0.5 * std::atan2(2.0 * b, a - c);
++  const double ct = std::cos(theta), st = std::sin(theta);
++  const double e1 = std::min(4.0, std::max(0.25, ref / l1));
++  const double e2 = std::min(4.0, std::max(0.25, ref / l2));
++  const Eigen::Matrix2d U((Eigen::Matrix2d() << ct, -st, st, ct).finished());
++  C = U * Eigen::Vector2d(e1, e2).asDiagonal() * U.transpose();
++  return true;
++}
++
++/// Per-frame gradients the statistic needs.  Level 0 is the tracker's own equalised image, i.e. exactly
++/// the pixels the detector saw.
++struct CandStats {
++  cv::Mat Ix, Iy;                  // level 0
++  cv::Mat hIx, hIy;                // level 1 (half resolution), for CSR
++  std::vector<cv::Mat> bIx, bIy;   // one pair per sigma, for the characteristic-scale branch
++};
++
++const std::vector<double> &cscale_sigmas() {
++  static const std::vector<double> s = {0.5, 0.7071, 1.0, 1.4142, 2.0, 2.8284, 4.0, 5.6569, 8.0, 11.3137};
++  return s;
++}
++
++void prepare_stats(CandStats &st, const std::vector<cv::Mat> &pyr, bool with_scales) {
++  const cv::Mat &img = pyr.at(0);
++  cv::Sobel(img, st.Ix, CV_32F, 1, 0, 3);
++  cv::Sobel(img, st.Iy, CV_32F, 0, 1, 3);
++  cv::Sobel(pyr.at(1), st.hIx, CV_32F, 1, 0, 3);
++  cv::Sobel(pyr.at(1), st.hIy, CV_32F, 0, 1, 3);
++  st.bIx.clear();
++  st.bIy.clear();
++  if (!with_scales)
++    return;
++  cv::Mat blur, pad;
++  for (double s : cscale_sigmas()) {
++    cv::GaussianBlur(img, blur, cv::Size(0, 0), s, s);
++    cv::Mat gx, gy;
++    cv::Sobel(blur, gx, CV_32F, 1, 0, 3);
++    cv::Sobel(blur, gy, CV_32F, 0, 1, 3);
++    st.bIx.push_back(gx);
++    st.bIy.push_back(gy);
++  }
++}
++
++/// The ranking score: larger is better.  Bounds checked, so a candidate too close to the border scores
++/// -inf and loses its cell to one that can be scored.
++double cand_score(TrackKLT::SelectMode mode, const CandStats &st, int x, int y, uint32_t salt) {
++  double l1 = 0.0, l2 = 0.0;
++  switch (mode) {
++  case TrackKLT::SelectMode::L2:
++    if (!tensor_eig(st.Ix, st.Iy, x, y, 7, l1, l2))
++      return -std::numeric_limits<double>::infinity();
++    return l2;
++  case TrackKLT::SelectMode::FOSTNER:
++    if (!tensor_eig(st.Ix, st.Iy, x, y, 7, l1, l2))
++      return -std::numeric_limits<double>::infinity();
++    return (l1 + l2 > 1e-12) ? (l1 * l2) / (l1 + l2) : 0.0;
++  case TrackKLT::SelectMode::CSR: {
++    if (!tensor_eig(st.Ix, st.Iy, x, y, 7, l1, l2))
++      return -std::numeric_limits<double>::infinity();
++    const double full = l2;
++    double d1 = 0.0, d2 = 0.0;
++    // half resolution: the same physical footprint is a 7x7 window at (x/2, y/2)
++    if (!tensor_eig(st.hIx, st.hIy, x / 2, y / 2, 3, d1, d2))
++      return -std::numeric_limits<double>::infinity();
++    const double csr = d2 / std::max(full, 1e-12);
++    return -csr;   // offline orientation: smaller CSR survives better
++  }
++  case TrackKLT::SelectMode::CSCALE: {
++    // gamma=1 characteristic scale: argmax_sigma sigma * l2(sigma); offline orientation is inverted
++    int best = 0;
++    double bestv = -1.0;
++    for (size_t k = 0; k < st.bIx.size(); ++k) {
++      if (!tensor_eig(st.bIx[k], st.bIy[k], x, y, 7, l1, l2))
++        return -std::numeric_limits<double>::infinity();
++      const double v = cscale_sigmas()[k] * l2;
++      if (v > bestv) {
++        bestv = v;
++        best = (int)k;
++      }
++    }
++    return -cscale_sigmas()[best];
++  }
++  case TrackKLT::SelectMode::RANDOM:
++    // a deterministic pseudo-random score: the null branch must be reproducible
++    salt = salt * 1664525u + 1013904223u;
++    return (double)(salt >> 8) / 16777216.0;
++  default:
++    return 0.0;
++  }
++}
++
++} // namespace
++
++int TrackKLT::select_start() {
++  static const int s = []() {
++    const char *v = std::getenv("OV_SELECT_START");
++    return v ? std::max(0, std::atoi(v)) : 0;
++  }();
++  return s;
++}
++
++TrackKLT::SelectMode TrackKLT::active_select_mode() const {
++  return frame_count_ >= (size_t)select_start() ? select_mode() : SelectMode::FAST;
++}
++
++TrackKLT::SelectMode TrackKLT::select_mode() {
++  static const SelectMode m = []() {
++    const char *s = std::getenv("OV_SELECT");
++    const std::string v = s ? std::string(s) : std::string();
++    if (v == "fastpool")
++      return SelectMode::FASTPOOL;
++    if (v == "random")
++      return SelectMode::RANDOM;
++    if (v == "l2")
++      return SelectMode::L2;
++    if (v == "fostner")
++      return SelectMode::FOSTNER;
++    if (v == "csr")
++      return SelectMode::CSR;
++    if (v == "cscale")
++      return SelectMode::CSCALE;
++    if (v == "cp1")
++      return SelectMode::C_P1;
++    if (v == "cp3")
++      return SelectMode::C_P3;
++    if (v == "parallax")
++      return SelectMode::PARALLAX;
++    if (v == "replace")
++      return SelectMode::REPLACE;
++    return SelectMode::FAST;
++  }();
++  return m;
++}
++
+ void TrackKLT::feed_new_camera(const CameraData &message) {
+ 
+   // Error check that we have all the data
+@@ -98,6 +302,7 @@ void TrackKLT::feed_monocular(const CameraData &message, size_t msg_id) {
+   // Lock this data feed for this camera
+   size_t cam_id = message.sensor_ids.at(msg_id);
+   std::lock_guard<std::mutex> lck(mtx_feeds.at(cam_id));
++  frame_count_++;
+ 
+   // Get our image objects for this image
+   cv::Mat img = img_curr.at(cam_id);
+@@ -127,9 +332,53 @@ void TrackKLT::feed_monocular(const CameraData &message, size_t msg_id) {
+   int pts_before_detect = (int)pts_last[cam_id].size();
+   auto pts_left_old = pts_last[cam_id];
+   auto ids_left_old = ids_last[cam_id];
++  // ids above this watermark are the candidates detected here, i.e. the ones the delayed branches may drop
++  const size_t id_wm = currid;
++  const SelectMode cmode0 = active_select_mode();
++  const bool prob_mode = (cmode0 == SelectMode::PARALLAX || cmode0 == SelectMode::REPLACE);
++  const bool replace_mode = (cmode0 == SelectMode::REPLACE);
++  std::vector<cv::KeyPoint> promoted;
++  const size_t prob_before_ = prob_.size();
++  std::unordered_set<size_t> prob_ids;
++  if (prob_mode) {
++    // Probation points take part in the detector's occupancy grid and in its 15 px mask, but they are not
++    // features.  Without this they would be invisible to the grid, every cell would look depleted, and the
++    // detector would keep entering candidates -- the feature budget would silently grow (measured: 242
++    // tracks and 50 births/frame against the baseline's 166 and 12.5).
++    for (const auto &p : prob_)
++      prob_ids.insert(p.id);
++    for (const auto &p : prob_) {
++      pts_left_old.emplace_back(p.pt, 0.f, 0.f);
++      ids_left_old.push_back(p.id);
++    }
++  }
+   perform_detection_monocular(img_pyramid_last[cam_id], img_mask_last[cam_id], pts_left_old, ids_left_old);
+   rT3 = boost::posix_time::microsec_clock::local_time();
+ 
++  // OV_SELECT=parallax: the detected candidates do not become features.  They enter a probation list
++  // and are tracked for prob_k frames; only the ones whose displacement, minus the accumulated
++  // frame-median displacement, reaches prob_theta are promoted to features.  That gate is the first
++  // point in the pipeline where depth (parallax) is observable, which is what the survival statistics
++  // cannot see at birth.
++  if (prob_mode) {
++    std::vector<cv::KeyPoint> old_pts;
++    std::vector<size_t> old_ids;
++    old_pts.reserve(pts_left_old.size());
++    old_ids.reserve(pts_left_old.size());
++    for (size_t k = 0; k < pts_left_old.size(); ++k) {
++      if (ids_left_old[k] > id_wm)
++        prob_.push_back({ids_left_old[k], pts_left_old[k].pt, pts_left_old[k].pt, med_path_, frame_count_});
++      else if (prob_ids.find(ids_left_old[k]) == prob_ids.end()) {
++        old_pts.push_back(pts_left_old[k]);
++        old_ids.push_back(ids_left_old[k]);
++      }
++    }
++    pts_left_old.swap(old_pts);
++    ids_left_old.swap(old_ids);
++    if (frame_count_ % 50 == 0)
++      PRINT_INFO("[PROB] f=%zu entries=%zu prob=%zu\n", frame_count_, prob_.size() - prob_before_, prob_.size());
++  }
++
+   // Our return success masks, and predicted new features
+   std::vector<uchar> mask_ll;
+   std::vector<cv::KeyPoint> pts_left_new = pts_left_old;
+@@ -154,6 +403,7 @@ void TrackKLT::feed_monocular(const CameraData &message, size_t msg_id) {
+   // Get our "good tracks"
+   std::vector<cv::KeyPoint> good_left;
+   std::vector<size_t> good_ids_left;
++  std::vector<size_t> good_src;   // index into pts_left_new, for the delayed branches below
+ 
+   // Loop through all left points
+   for (size_t i = 0; i < pts_left_new.size(); i++) {
+@@ -169,15 +419,533 @@ void TrackKLT::feed_monocular(const CameraData &message, size_t msg_id) {
+     if (mask_ll[i]) {
+       good_left.push_back(pts_left_new[i]);
+       good_ids_left.push_back(ids_left_old[i]);
++      good_src.push_back(i);
++    }
++  }
++
++  // Probation: advance the frame-median path, track the probed candidates one frame and promote the ones
++  // that have shown parallax.  The median is taken over the accepted tracks, so it carries the camera's
++  // own motion (rotation and forward flow) and leaves the depth-dependent part in the residual.
++  if (prob_mode) {
++    static int dbg_eval = 0, dbg_pass = 0;
++    static double dbg_motion = 0, dbg_e = 0;
++    std::vector<int> cell_promoted((size_t)grid_x * grid_y, 0);
++    // the same per-cell quota the detector uses (num_features_grid in perform_detection_monocular)
++    const int quota = (int)((double)num_features / (double)(grid_x * grid_y)) + 1;
++    std::vector<float> dx, dy;
++    dx.reserve(pts_left_new.size());
++    dy.reserve(pts_left_new.size());
++    for (size_t i = 0; i < pts_left_new.size(); ++i) {
++      if (!mask_ll[i])
++        continue;
++      dx.push_back(pts_left_new[i].pt.x - pts_left_old[i].pt.x);
++      dy.push_back(pts_left_new[i].pt.y - pts_left_old[i].pt.y);
++    }
++    if (dx.size() > 10) {
++      const size_t mid = dx.size() / 2;
++      std::nth_element(dx.begin(), dx.begin() + mid, dx.end());
++      std::nth_element(dy.begin(), dy.begin() + mid, dy.end());
++      med_path_ += cv::Point2f(dx[mid], dy[mid]);
++    }
++    if (!prob_.empty()) {
++      static const int prob_k = []() {
++        const char *s = std::getenv("OV_PROB_K");
++        return s ? std::atoi(s) : 10;
++      }();
++      static const float prob_theta = []() {
++        const char *s = std::getenv("OV_PROB_THETA");
++        return s ? (float)std::atof(s) : 3.0f;
++      }();
++      std::vector<cv::Point2f> in, out;
++      std::vector<uchar> st;
++      std::vector<float> err;
++      in.reserve(prob_.size());
++      for (const auto &p : prob_)
++        in.push_back(p.pt);
++      cv::TermCriteria tc(cv::TermCriteria::COUNT | cv::TermCriteria::EPS, 30, 0.01);
++      cv::calcOpticalFlowPyrLK(img_pyramid_last[cam_id], imgpyr, in, out, st, err, win_size, pyr_levels, tc);
++      std::vector<ProbPoint> keep;
++      keep.reserve(prob_.size());
++      struct PassedCand {
++        float score;
++        int cx, cy;
++        cv::Point2f pt;
++      };
++      std::vector<PassedCand> passed;
++      for (size_t k = 0; k < prob_.size(); ++k) {
++        if (!st[k])
++          continue;
++        if (out[k].x < 0 || out[k].y < 0 || out[k].x >= imgpyr.at(0).cols || out[k].y >= imgpyr.at(0).rows)
++          continue;
++        ProbPoint p = prob_[k];
++        p.pt = out[k];
++        if (frame_count_ - p.birth_frame >= (size_t)prob_k) {
++          const cv::Point2f motion = med_path_ - p.birth_m;
++          const cv::Point2f e = (p.pt - p.birth_pt) - motion;
++          // below the gate's own scale the parallax cannot be measured reliably (standstill, creep):
++          // falling back to survival there keeps the frontend fed, and the initialiser working, without
++          // changing what the gate means once the camera actually moves
++          const bool measurable = std::hypot(motion.x, motion.y) >= prob_theta;
++          dbg_eval++;
++          dbg_motion += std::hypot(motion.x, motion.y);
++          dbg_e += std::hypot(e.x, e.y);
++          const bool pass = (!measurable || std::hypot(e.x, e.y) >= prob_theta);
++          if (pass) {
++            const int cpx = std::max(1, img.cols / grid_x);
++            const int cpy = std::max(1, img.rows / grid_y);
++            const int cx = std::min(grid_x - 1, std::max(0, (int)out[k].x / cpx));
++            const int cy = std::min(grid_y - 1, std::max(0, (int)out[k].y / cpy));
++            passed.push_back({(float)std::hypot(e.x, e.y), cx, cy, p.pt});
++          }
++        } else {
++          keep.push_back(p);
++        }
++      }
++      prob_.swap(keep);
++
++      // Replace mode keeps the feature count where it is: only as many candidates are promoted as the
++      // frame lost, best parallax first and at most one cell's quota each.  Parallax mode keeps the
++      // per-cell quota instead (it is the gate, not the budget, that is under test there).
++      int allow = (int)passed.size();
++      if (replace_mode)
++        allow = std::min(allow, std::max(0, pts_before_detect - (int)good_left.size()));
++      std::sort(passed.begin(), passed.end(),
++                [](const PassedCand &a, const PassedCand &b) { return a.score > b.score; });
++      for (const auto &c : passed) {
++        if ((int)promoted.size() >= allow)
++          break;
++        int &cnt = cell_promoted[(size_t)c.cy * grid_x + c.cx];
++        if (cnt >= quota)
++          continue;
++        cnt++;
++        dbg_pass++;
++        promoted.emplace_back(c.pt, 0.f, 0.f);
++      }
++    }
++    for (auto &kp : promoted) {
++      good_left.push_back(kp);
++      good_ids_left.push_back(currid++);
++    }
++    if (frame_count_ % 50 == 0)
++      PRINT_INFO("[PROB] f=%zu kept=%zu promoted=%zu med=%.2f,%.2f eval=%d pass=%d motion=%.2f e=%.2f\n",
++                 frame_count_, prob_.size(), promoted.size(), med_path_.x, med_path_.y, dbg_eval, dbg_pass,
++                 dbg_eval ? dbg_motion / dbg_eval : 0.0, dbg_eval ? dbg_e / dbg_eval : 0.0);
++    if (frame_count_ % 50 == 0) {
++      dbg_eval = dbg_pass = 0;
++      dbg_motion = dbg_e = 0;
++    }
++  }
++
++  // Experiment C, delayed branches (OV_SELECT=cp1|cp3): a candidate's own first step is already finished
++  // here, so its displacement (C-P1) or its forward-backward error (C-P3) can decide whether it survives to
++  // become a birth.  The detection over-sampled 3x so that this filter does not shrink the feature budget:
++  // exactly as many candidates are kept as the budget needs, chosen by the statistic.
++  {
++    const SelectMode cmode = active_select_mode();
++    if ((cmode == SelectMode::C_P1 || cmode == SelectMode::C_P3) && !good_left.empty()) {
++      const int n_old = (int)good_left.size() - (int)std::count_if(good_ids_left.begin(), good_ids_left.end(),
++                                                                   [&](size_t id) { return id > id_wm; });
++      const int n_keep = std::max(0, num_features - n_old);
++      std::vector<size_t> cand;
++      for (size_t i = 0; i < good_ids_left.size(); ++i)
++        if (good_ids_left[i] > id_wm)
++          cand.push_back(i);
++      if ((int)cand.size() > n_keep) {
++        std::vector<cv::Point2f> cur, back;
++        cur.reserve(cand.size());
++        for (size_t i : cand)
++          cur.push_back(good_left[i].pt);
++        std::vector<uchar> fbok;
++        std::vector<float> fberr;
++        if (cmode == SelectMode::C_P3) {
++          cv::TermCriteria fbcrit = cv::TermCriteria(cv::TermCriteria::COUNT | cv::TermCriteria::EPS, 30, 0.01);
++          cv::calcOpticalFlowPyrLK(imgpyr, img_pyramid_last[cam_id], cur, back, fbok, fberr, win_size, pyr_levels, fbcrit);
++        }
++        std::vector<std::pair<double, size_t>> ranked;
++        ranked.reserve(cand.size());
++        for (size_t k = 0; k < cand.size(); ++k) {
++          const cv::Point2f det = pts_left_new[good_src[cand[k]]].pt;   // where it was detected (frame t)
++          double score = 0.0;
++          if (cmode == SelectMode::C_P1) {
++            const cv::Point2f d = good_left[cand[k]].pt - det;
++            score = -std::hypot(d.x, d.y);                              // smaller first step survives better
++          } else {
++            const cv::Point2f e = (k < back.size()) ? (back[k] - det) : cv::Point2f(1e6f, 1e6f);
++            score = -std::hypot(e.x, e.y);                              // smaller FB error survives better
++          }
++          ranked.emplace_back(score, cand[k]);
++        }
++        std::sort(ranked.begin(), ranked.end(),
++                  [](const std::pair<double, size_t> &a, const std::pair<double, size_t> &b) { return a.first > b.first; });
++        // Coverage first: every non-empty cell contributes its best candidate before any cell contributes a
++        // second one.  A plain global top-k would let the score decide the spatial distribution too (for
++        // C-P1 the smallest first step sits near the focus of expansion, i.e. on the farthest features, so
++        // the births would collapse onto the centre and the comparison would measure that bias rather than
++        // the statistic).  The grid is the constraint the baseline also obeys, so it is kept here.
++        const int cell_px_x = img.cols / grid_x;
++        const int cell_px_y = img.rows / grid_y;
++        std::vector<std::vector<size_t>> bycell((size_t)grid_x * grid_y);
++        for (const auto &kv : ranked) {
++          const cv::Point2f &pt = good_left[kv.second].pt;
++          const int cx = std::min(grid_x - 1, std::max(0, (int)pt.x / cell_px_x));
++          const int cy = std::min(grid_y - 1, std::max(0, (int)pt.y / cell_px_y));
++          bycell[(size_t)cy * grid_x + cx].push_back(kv.second);
++        }
++        std::vector<char> keep(good_left.size(), 0);
++        int taken = 0;
++        for (size_t r = 0; taken < n_keep; ++r) {
++          bool any = false;
++          for (const auto &cell : bycell) {
++            if (r >= cell.size())
++              continue;
++            keep[cell[r]] = 1;
++            taken++;
++            any = true;
++            if (taken >= n_keep)
++              break;
++          }
++          if (!any)
++            break;
++        }
++        std::vector<cv::KeyPoint> gl2;
++        std::vector<size_t> gi2, gs2;
++        for (size_t i = 0; i < good_left.size(); ++i) {
++          if (good_ids_left[i] <= id_wm || keep[i]) {
++            gl2.push_back(good_left[i]);
++            gi2.push_back(good_ids_left[i]);
++            gs2.push_back(good_src[i]);
++          }
++        }
++        good_left.swap(gl2);
++        good_ids_left.swap(gi2);
++        good_src.swap(gs2);
++      }
+     }
+   }
+ 
+   // Update our feature database, with theses new observations
++  if (frame_count_ % 50 == 0) {
++    size_t n_births = 0;
++    for (size_t id : good_ids_left)
++      n_births += (id > id_wm) ? 1 : 0;
++    const int lost = pts_before_detect - (int)good_left.size() + (int)n_births;
++    PRINT_INFO("[KLT] f=%zu tracks=%zu births=%zu lost=%d\n", frame_count_, good_left.size(), n_births,
++               std::max(0, lost));
++  }
+   for (size_t i = 0; i < good_left.size(); i++) {
+     cv::Point2f npt_l = camera_calib.at(cam_id)->undistort_cv(good_left.at(i).pt);
+     database->update_feature(good_ids_left.at(i), message.timestamp, cam_id, good_left.at(i).pt.x, good_left.at(i).pt.y, npt_l.x, npt_l.y);
+   }
+ 
++  // T3 bookkeeping (OV_WEIGHT=t3): features tracked last frame that are gone now, with their last
++  // position.  A birth in a neighbourhood that has been losing tracks is a less reliable anchor.
++  {
++    std::unordered_set<size_t> alive(good_ids_left.begin(), good_ids_left.end());
++    for (size_t i = 0; i < ids_last[cam_id].size(); ++i)
++      if (alive.find(ids_last[cam_id][i]) == alive.end())
++        deaths_.emplace_back(frame_count_, pts_last[cam_id][i].pt);
++    while (!deaths_.empty() && frame_count_ - deaths_.front().first > 10)
++      deaths_.pop_front();
++  }
++
++  // Experiment D: per-feature measurement-noise multiplier.  The frontend already knows something the
++  // estimator does not: how well each point can be tracked.  OV_WEIGHT=l2 uses lambda2 at birth, whose
++  // inverse is the KLT displacement variance (Cov(dp) = 2 sigma^2 M^-1); OV_WEIGHT=fb uses the
++  // forward-backward error of the current track, a direct error estimate.  OV_WALPHA tempers the
++  // lambda2 ratio (0.5 = sigma proportional to 1/lambda2, 0 = no weighting).
++  {
++    static const std::string wmode = []() {
++      const char *s = std::getenv("OV_WEIGHT");
++      return s ? std::string(s) : std::string();
++    }();
++    static const double walpha = []() {
++      const char *s = std::getenv("OV_WALPHA");
++      return s ? std::atof(s) : 0.5;
++    }();
++    // how far the per-feature sigma may deviate from the nominal one: the estimator is sensitive, so
++    // the deviation is bounded on both sides (0.1 -> sigma in [0.9, 1.1] of nominal)
++    static const double wclamp = []() {
++      const char *s = std::getenv("OV_WCLAMP");
++      const double v = s ? std::atof(s) : 0.2;
++      return v > 0.0 ? v : 0.2;
++    }();
++    if ((wmode == "l2" || wmode == "l2init" || wmode == "l2cov" || wmode == "fb_l2") && !good_left.empty()) {
++      CandStats st;
++      prepare_stats(st, imgpyr, false);
++      for (size_t i = 0; i < good_left.size(); ++i) {
++        if (good_ids_left[i] <= id_wm)
++          continue;   // a track keeps the quality it was born with
++        double l1 = 0.0, l2v = 0.0;
++        if (!tensor_eig(st.Ix, st.Iy, (int)std::lround(good_left[i].pt.x), (int)std::lround(good_left[i].pt.y), 7, l1, l2v))
++          continue;
++        auto f = database->get_feature(good_ids_left[i]);
++        if (!f || l2v <= 1e-9)
++          continue;
++        l2_ref_ = (l2_ref_ <= 0.0) ? l2v : 0.995 * l2_ref_ + 0.005 * l2v;
++        const double w = std::pow(l2_ref_ / l2v, 0.5 * walpha);
++        // l2 effects both init and update; l2init is an initialization-only prior;
++        // fb_l2 combines the per-frame FB multiplier with this init-only term.
++        if (wmode == "l2")
++          f->sigma_mult = std::min(1.0 + wclamp, std::max(1.0 - wclamp, w));
++        else if (wmode == "l2cov") {
++          Eigen::Matrix2d C;
++          const double ref = (l2_ref_ > 0.0) ? l2_ref_ : l2v;
++          if (tensor_cov(st.Ix, st.Iy, (int)std::lround(good_left[i].pt.x),
++                         (int)std::lround(good_left[i].pt.y), 7, ref, C))
++            f->init_cov = C;
++        } else
++          f->sigma_mult_init = std::min(1.0 + wclamp, std::max(1.0 - wclamp, w));
++      }
++    } else if ((wmode == "p3" || wmode == "p1" || wmode == "p1init") && !good_left.empty()) {
++      // Birth-time step statistics, the same definitions as the offline P family: p3 is the
++      // forward-backward error of the candidate's own first step (C-P3), p1 is its first-step
++      // displacement relative to the frame's median (C-P1).  A feature keeps the prior it was born
++      // with, exactly like the l2 mode.
++      std::vector<size_t> idx;
++      std::vector<cv::Point2f> cur, prev;
++      for (size_t i = 0; i < good_left.size(); ++i) {
++        if (good_ids_left[i] <= id_wm || i >= good_src.size())
++          continue;
++        idx.push_back(i);
++        cur.push_back(good_left[i].pt);
++        prev.push_back(pts_left_old[good_src[i]].pt);
++      }
++      if (!idx.empty()) {
++        double d_med = 0.0;
++        if (wmode == "p1" || wmode == "p1init") {
++          // OV_P1_MEDIAN=old uses the old-track displacement median (the
++          // previous behavior); the default is the median of the new births'
++          // own first steps, which is the population being ranked.
++          static const bool birth_median = []() {
++            const char *s = std::getenv("OV_P1_MEDIAN");
++            return !s || std::string(s) != "old";
++          }();
++          std::vector<float> ds;
++          if (birth_median) {
++            ds.reserve(idx.size());
++            for (size_t k = 0; k < idx.size(); ++k)
++              ds.push_back(cv::norm(cur[k] - prev[k]));
++          } else {
++            for (size_t i = 0; i < pts_left_new.size(); ++i)
++              if (mask_ll[i] && ids_left_old[i] <= id_wm)
++                ds.push_back(cv::norm(pts_left_new[i].pt - pts_left_old[i].pt));
++          }
++          if (!ds.empty()) {
++            std::nth_element(ds.begin(), ds.begin() + ds.size() / 2, ds.end());
++            d_med = ds[ds.size() / 2];
++          }
++        }
++        std::vector<cv::Point2f> back;
++        std::vector<uchar> stt;
++        std::vector<float> err;
++        if (wmode == "p3") {
++          cv::TermCriteria tc(cv::TermCriteria::COUNT | cv::TermCriteria::EPS, 30, 0.01);
++          cv::calcOpticalFlowPyrLK(imgpyr, img_pyramid_last[cam_id], cur, back, stt, err, win_size, pyr_levels, tc);
++        }
++        // p3 is used RELATIVE to this frame's median first-step FB error: with the absolute 1 px
++        // reference almost every birth sits below it (the frontend's gate already rejected the bad
++        // ones), the weight collapses to 1 and the prior is inert.  q50 is the frame's median over the
++        // births, so "worse than the typical first step" is what gets down-weighted.
++        std::vector<double> fbvals(idx.size(), 1.0);
++        double q50 = 0.0;
++        if (wmode == "p3") {
++          std::vector<double> tmp;
++          tmp.reserve(idx.size());
++          for (size_t k = 0; k < idx.size(); ++k) {
++            const double fb = (k < back.size() && stt[k]) ? cv::norm(back[k] - prev[k]) : 1e3;
++            fbvals[k] = fb;
++            if (std::isfinite(fb) && fb < 1e2)
++              tmp.push_back(fb);
++          }
++          if (!tmp.empty()) {
++            std::nth_element(tmp.begin(), tmp.begin() + tmp.size() / 2, tmp.end());
++            q50 = std::max(tmp[tmp.size() / 2], 1e-3);
++          }
++        }
++        for (size_t k = 0; k < idx.size(); ++k) {
++          auto f = database->get_feature(good_ids_left[idx[k]]);
++          if (!f)
++            continue;
++          double w = 1.0;
++          if (wmode == "p3") {
++            w = (q50 > 0.0) ? std::pow(std::max(fbvals[k], q50) / q50, 0.5) : 1.0;
++          } else if (d_med > 1e-3) {
++            const double d = cv::norm(cur[k] - prev[k]);
++            if (wmode == "p1init") {
++              // Parallax/depth prior: low first-step displacement -> high initial depth
++              // uncertainty.  Only inflate, and only at landmark initialization.
++              w = 1.0 + walpha * std::max(0.0, d_med / std::max(d, 0.5) - 1.0);
++              f->sigma_mult_init = std::min(2.0, std::max(1.0, w));
++              continue;
++            }
++            w = d_med / std::max(d, 0.5);   // little motion means far away, where depth is poorly observed
++          }
++          f->sigma_mult = std::min(1.0 + wclamp, std::max(1.0 - wclamp, w));
++        }
++      }
++    } else if ((wmode == "fst" || wmode == "harris" || wmode == "csr" || wmode == "cscale" ||
++                wmode == "round" || wmode == "ent") &&
++               !good_left.empty()) {
++      // The other A/B statistics as a measurement-precision prior.  The semantics here is "higher
++      // quality = more precise bearing", which is NOT the same as the offline survival direction
++      // (CSR, for instance, survives better when small but is sharper when large).
++      CandStats st;
++      prepare_stats(st, imgpyr, wmode == "cscale");
++      static double q_ref = 0.0;
++      const int cell_px_x2 = std::max(1, (int)imgpyr.at(0).cols / grid_x);
++      (void)cell_px_x2;
++      for (size_t i = 0; i < good_left.size(); ++i) {
++        if (good_ids_left[i] <= id_wm)
++          continue;
++        const int x = (int)std::lround(good_left[i].pt.x);
++        const int y = (int)std::lround(good_left[i].pt.y);
++        double l1 = 0.0, l2v = 0.0, q = 0.0;
++        if (wmode == "fst" || wmode == "harris") {
++          if (!tensor_eig(st.Ix, st.Iy, x, y, 7, l1, l2v))
++            continue;
++          q = (wmode == "fst") ? (l1 * l2v) / std::max(l1 + l2v, 1e-12)
++                               : (l1 * l2v - 0.04 * (l1 + l2v) * (l1 + l2v));
++        } else if (wmode == "csr") {
++          if (!tensor_eig(st.Ix, st.Iy, x, y, 7, l1, l2v))
++            continue;
++          double d1 = 0.0, d2 = 0.0;
++          if (!tensor_eig(st.hIx, st.hIy, x / 2, y / 2, 3, d1, d2))
++            continue;
++          q = d2 / std::max(l2v, 1e-12);   // fine-scale dominance: sharper = more precise
++        } else if (wmode == "round") {
++          if (!tensor_eig(st.Ix, st.Iy, x, y, 7, l1, l2v))
++            continue;
++          q = l2v / std::max(l1, 1e-12);   // lambda2/lambda1: isotropic corner = well localized
++        } else if (wmode == "ent") {
++          const cv::Rect roi(x - 7, y - 7, 15, 15);
++          if (roi.x < 0 || roi.y < 0 || roi.x + roi.width > imgpyr.at(0).cols || roi.y + roi.height > imgpyr.at(0).rows)
++            continue;
++          int hist[32] = {0};
++          const cv::Mat patch = imgpyr.at(0)(roi);
++          for (int r = 0; r < patch.rows; ++r)
++            for (int c = 0; c < patch.cols; ++c)
++              hist[patch.at<uchar>(r, c) * 32 / 256]++;
++          double H = 0.0;
++          for (int b = 0; b < 32; ++b)
++            if (hist[b] > 0) {
++              const double pp = (double)hist[b] / 225.0;
++              H -= pp * std::log(pp);
++            }
++          q = H / std::log(32.0);   // normalized texture entropy
++        } else {
++          // characteristic scale: argmax sigma * l2; a smaller scale is a sharper corner
++          double best_sig = cscale_sigmas().back();
++          double bestv = -1.0;
++          bool ok = true;
++          for (size_t k = 0; k < st.bIx.size(); ++k) {
++            if (!tensor_eig(st.bIx[k], st.bIy[k], x, y, 7, l1, l2v)) {
++              ok = false;
++              break;
++            }
++            const double v = cscale_sigmas()[k] * l2v;
++            if (v > bestv) {
++              bestv = v;
++              best_sig = cscale_sigmas()[k];
++            }
++          }
++          if (!ok)
++            continue;
++          q = 1.0 / std::max(best_sig, 1e-3);
++        }
++        if (q <= 0.0)
++          continue;
++        q_ref = (q_ref <= 0.0) ? q : 0.995 * q_ref + 0.005 * q;
++        const double w = std::pow(q_ref / q, 0.5 * walpha);
++        auto f = database->get_feature(good_ids_left[i]);
++        if (f)
++          f->sigma_mult = std::min(1.0 + wclamp, std::max(1.0 - wclamp, w));
++      }
++    } else if (wmode == "t3" && !good_left.empty()) {
++      // T3: recent deaths in a 30 px neighbourhood over the last 10 frames.  More deaths means the
++      // area has been unstable (dynamic objects, degraded texture), so the birth is less trustworthy.
++      for (size_t i = 0; i < good_left.size(); ++i) {
++        if (good_ids_left[i] <= id_wm)
++          continue;
++        int nd = 0;
++        for (const auto &d : deaths_)
++          if (cv::norm(d.second - good_left[i].pt) <= 30.0)
++            nd++;
++        const double w = 1.0 + wclamp * std::min(1.0, nd / 3.0);
++        auto f = database->get_feature(good_ids_left[i]);
++        if (f)
++          f->sigma_mult = std::min(1.0 + wclamp, std::max(1.0 - wclamp, w));
++      }
++    } else if (wmode == "fb" && !good_left.empty()) {
++      std::vector<cv::Point2f> cur, back;
++      cur.reserve(good_left.size());
++      for (const auto &k : good_left)
++        cur.push_back(k.pt);
++      std::vector<uchar> stt;
++      std::vector<float> err;
++      cv::TermCriteria tc(cv::TermCriteria::COUNT | cv::TermCriteria::EPS, 30, 0.01);
++      cv::calcOpticalFlowPyrLK(imgpyr, img_pyramid_last[cam_id], cur, back, stt, err, win_size, pyr_levels, tc);
++      for (size_t i = 0; i < good_left.size() && i < back.size(); ++i) {
++        auto f = database->get_feature(good_ids_left[i]);
++        if (!f)
++          continue;
++        const cv::Point2f prev = (i < good_src.size()) ? pts_left_old[good_src[i]].pt : good_left[i].pt;
++        const double fb = stt[i] ? cv::norm(back[i] - prev) : 1e3;
++        // one pixel of FB error is the nominal track; worse tracks get a larger sigma, never smaller
++        f->sigma_mult = std::min(1.0 + wclamp, std::max(1.0, fb));
++      }
++    }
++    // Per-frame relative FB error: R/R0 = (1 + alpha * max(0, e_i/e_med - 1))^2.
++    // Only tracks worse than the frame median are down-weighted; good tracks stay
++    // at the nominal variance.  fb_l2 also carries the l2init prior, set above.
++    if ((wmode == "fb_rel" || wmode == "fb_l2") && !good_left.empty()) {
++      std::vector<cv::Point2f> cur, back;
++      cur.reserve(good_left.size());
++      for (const auto &k : good_left)
++        cur.push_back(k.pt);
++      std::vector<uchar> stt;
++      std::vector<float> err;
++      cv::TermCriteria tc(cv::TermCriteria::COUNT | cv::TermCriteria::EPS, 30, 0.01);
++      cv::calcOpticalFlowPyrLK(imgpyr, img_pyramid_last[cam_id], cur, back, stt, err, win_size, pyr_levels, tc);
++      std::vector<double> fb(good_left.size(), 1e3), tmp;
++      tmp.reserve(good_left.size());
++      for (size_t i = 0; i < good_left.size() && i < back.size(); ++i) {
++        const cv::Point2f prev = (i < good_src.size()) ? pts_left_old[good_src[i]].pt : good_left[i].pt;
++        if (stt[i]) {
++          fb[i] = cv::norm(back[i] - prev);
++          if (std::isfinite(fb[i]) && fb[i] < 1e3)
++            tmp.push_back(fb[i]);
++        }
++      }
++      double med = 1.0;
++      if (!tmp.empty()) {
++        std::nth_element(tmp.begin(), tmp.begin() + tmp.size() / 2, tmp.end());
++        med = std::max(tmp[tmp.size() / 2], 1e-3);
++      }
++      for (size_t i = 0; i < good_left.size(); ++i) {
++        auto f = database->get_feature(good_ids_left[i]);
++        if (!f)
++          continue;
++        const double s = fb[i] / med;
++        const double w = 1.0 + walpha * std::max(0.0, s - 1.0);
++        f->sigma_mult = std::min(2.0, std::max(0.5, w));
++      }
++    }
++    if (!wmode.empty() && frame_count_ % 50 == 0) {
++      std::vector<double> ms;
++      ms.reserve(good_ids_left.size());
++      for (size_t id : good_ids_left) {
++        auto f = database->get_feature(id);
++        if (f)
++          ms.push_back(f->sigma_mult);
++      }
++      if (!ms.empty()) {
++        std::sort(ms.begin(), ms.end());
++        PRINT_INFO("[WEIGHT] f=%zu mult median %.2f  p10 %.2f  p90 %.2f\n", frame_count_, ms[ms.size() / 2],
++                   ms[ms.size() / 10], ms[ms.size() * 9 / 10]);
++      }
++    }
++  }
++
+   // Move forward in time
+   {
+     std::lock_guard<std::mutex> lckv(mtx_last_vars);
+@@ -491,7 +1259,109 @@ void TrackKLT::perform_detection_monocular(const std::vector<cv::Mat> &img0pyr,
+     }
+   }
+   std::vector<cv::KeyPoint> pts0_ext;
+-  Grider_GRID::perform_griding(img0pyr.at(0), mask0_updated, valid_locs, pts0_ext, num_features, grid_x, grid_y, threshold, true);
++  const SelectMode mode = active_select_mode();
++  // 3x over-sampling in every non-baseline branch, so that the cell's choice is not a FAST preselection
++  // and the branches differ only in the ranking.  OV_POOL raises it for the wide-band experiment.
++  static const int pool_mult = []() {
++    const char *s = std::getenv("OV_POOL");
++    const int v = s ? std::atoi(s) : 3;
++    return v > 0 ? v : 3;
++  }();
++  const int oversample = (mode == SelectMode::FAST) ? 1 : pool_mult;
++  Grider_GRID::perform_griding(img0pyr.at(0), mask0_updated, valid_locs, pts0_ext, num_features * oversample, grid_x, grid_y,
++                               threshold, true);
++
++  // Experiment C: inside each grid cell keep the candidates with the best statistic.  The cell's cap
++  // (num_features_grid) is unchanged, so the per-frame/per-cell coverage constraint is exactly the one
++  // the baseline has -- only which candidates fill the cells changes.
++  //
++  // The minimum-distance rule has to be enforced DURING the selection, not after it: the highest-scoring
++  // candidates of a cell tend to sit on the same corner, so picking the top K and only then rejecting
++  // the ones closer than min_px_dist throws most of them away and quietly shrinks the feature budget.
++  // (That is what the first version did: measured on fs_full, the classic single-frame rankings scored
++  // 16-18 m against the baseline's 10.5 m, while the random branch -- whose scores are spread out, so
++  // the rule rarely binds -- matched the baseline.  The budget loss, not the statistic, was being
++  // measured.)
++  const bool rerank = mode == SelectMode::FASTPOOL || mode == SelectMode::L2 || mode == SelectMode::FOSTNER ||
++                      mode == SelectMode::CSR || mode == SelectMode::CSCALE || mode == SelectMode::RANDOM ||
++                      mode == SelectMode::PARALLAX;
++  if (rerank && !pts0_ext.empty()) {
++    CandStats st;
++    // FASTPOOL is the control for the enlarged pool: the same 3x oversampling and the same selection
++    // code, ranked by the FAST response -- i.e. exactly what the baseline picks, from one pool.  If its
++    // ATE differs from the baseline, the pool (not the statistic) is what changed.
++    if (mode != SelectMode::FASTPOOL)
++      prepare_stats(st, img0pyr, mode == SelectMode::CSCALE);
++    // probation mode ranks by the response too; its difference is the delayed parallax gate, not the ranking
++    const bool by_response = (mode == SelectMode::FASTPOOL || mode == SelectMode::PARALLAX);
++    // a probation entry is a candidate, not a feature: keep twice the quota so that the ~40% of points
++    // that pass the gate still fill the cell.  The bootstrap detection (no tracks yet, the frame the
++    // initialiser starts from) keeps the baseline's quota: a wider set there only feeds the initialiser
++    // weaker corners, and that is a different experiment.
++    static const float prob_mult = []() {
++      const char *s = std::getenv("OV_PROB_X");
++      return s ? (float)std::atof(s) : 2.0f;
++    }();
++    const bool bootstrap = pts0.empty();
++    const int per_cell = (mode == SelectMode::PARALLAX && !bootstrap)
++                             ? (int)(num_features_grid * prob_mult)
++                             : num_features_grid;
++    std::vector<std::vector<std::pair<double, int>>> cells((size_t)grid_x * grid_y);
++    // Same cell size as Grider_GRID, which uses integer division: a float cell edge would put the
++    // candidates of the rightmost fraction of a cell into the neighbouring cell's bucket.
++    const int cell_px_x = img0pyr.at(0).cols / grid_x;
++    const int cell_px_y = img0pyr.at(0).rows / grid_y;
++    for (size_t i = 0; i < pts0_ext.size(); ++i) {
++      int cx = std::min(grid_x - 1, std::max(0, (int)pts0_ext[i].pt.x / cell_px_x));
++      int cy = std::min(grid_y - 1, std::max(0, (int)pts0_ext[i].pt.y / cell_px_y));
++      const uint32_t salt = (uint32_t)(i * 2654435761u) ^ (uint32_t)(currid & 0xffffu);
++      const double sc =
++          by_response
++              ? (double)pts0_ext[i].response
++              : cand_score(mode, st, (int)std::lround(pts0_ext[i].pt.x), (int)std::lround(pts0_ext[i].pt.y), salt);
++      cells[(size_t)cy * grid_x + cx].emplace_back(sc, (int)i);
++      // OV_DUMP_POOL=<file>: every candidate with BOTH rankings, so the disagreement between the
++      // baseline's response order and the statistic can be measured on one and the same pool.
++      if (!by_response) {
++        static FILE *pool = nullptr;
++        static bool pool_tried = false;
++        if (!pool_tried) {
++          pool_tried = true;
++          const char *p = std::getenv("OV_DUMP_POOL");
++          if (p)
++            pool = std::fopen(p, "a");
++        }
++        if (pool)
++          std::fprintf(pool, "%zu %d %d %.2f %.2f %d %.6g\n", frame_count_, cx, cy, pts0_ext[i].pt.x,
++                       pts0_ext[i].pt.y, (int)std::lround(pts0_ext[i].response), sc);
++      }
++    }
++    std::vector<cv::KeyPoint> kept;
++    kept.reserve(pts0_ext.size());
++    // The selection enforces the spacing on the live mask (so it accumulates across cells, exactly like
++    // the outer loop), but the outer loop re-checks and would skip anything already marked.  Restore the
++    // mask afterwards: the kept set is already spaced, so the outer loop accepts it unchanged.
++    const cv::Mat close_before = grid_2d_close.clone();
++    for (auto &cell : cells) {
++      std::sort(cell.begin(), cell.end(),
++                [](const std::pair<double, int> &a, const std::pair<double, int> &b) { return a.first > b.first; });
++      int taken = 0;
++      for (size_t k = 0; k < cell.size() && taken < per_cell; ++k) {
++        const cv::KeyPoint &kp = pts0_ext[cell[k].second];
++        const int x_close = (int)(kp.pt.x / (float)min_px_dist);
++        const int y_close = (int)(kp.pt.y / (float)min_px_dist);
++        if (x_close < 0 || x_close >= size_close.width || y_close < 0 || y_close >= size_close.height)
++          continue;
++        if (grid_2d_close.at<uint8_t>(y_close, x_close) > 127)
++          continue;
++        grid_2d_close.at<uint8_t>(y_close, x_close) = 255;
++        kept.push_back(kp);
++        taken++;
++      }
++    }
++    close_before.copyTo(grid_2d_close);
++    pts0_ext.swap(kept);
++  }
+ 
+   // Now, reject features that are close a current feature
+   std::vector<cv::KeyPoint> kpts0_new;
+@@ -511,6 +1381,22 @@ void TrackKLT::perform_detection_monocular(const std::vector<cv::Mat> &img0pyr,
+     grid_2d_close.at<uint8_t>(y_grid, x_grid) = 255;
+   }
+ 
++  // Optional birth dump (OV_DUMP=<file>): frame, x, y, FAST response.  Used to measure how much of
++  // the birth set a selection rule actually changes; off unless the variable is set.
++  {
++    static FILE *dump = nullptr;
++    static bool dump_tried = false;
++    if (!dump_tried) {
++      dump_tried = true;
++      const char *p = std::getenv("OV_DUMP");
++      if (p)
++        dump = std::fopen(p, "a");
++    }
++    if (dump)
++      for (const auto &k : kpts0_new)
++        std::fprintf(dump, "%zu %.2f %.2f %.1f\n", frame_count_, k.pt.x, k.pt.y, k.response);
++  }
++
+   // Loop through and record only ones that are valid
+   // NOTE: if we multi-thread this atomic can cause some randomness due to multiple thread detecting features
+   // NOTE: this is due to the fact that we select update features based on feat id
+diff --git a/thirdparty/openvins/ov_core/src/track/TrackKLT.h b/thirdparty/openvins/ov_core/src/track/TrackKLT.h
+index f3ed6ea..2498df4 100644
+--- a/thirdparty/openvins/ov_core/src/track/TrackKLT.h
++++ b/thirdparty/openvins/ov_core/src/track/TrackKLT.h
+@@ -24,6 +24,8 @@
+ 
+ #include "TrackBase.h"
+ 
++#include <deque>
++
+ namespace ov_core {
+ 
+ /**
+@@ -62,6 +64,24 @@ public:
+    */
+   void feed_new_camera(const CameraData &message) override;
+ 
++  /// Which statistic ranks the candidates inside each grid cell (experiment C).
++  /// Selected at run time with OV_SELECT=random|l2|fostner|csr|cscale; FAST (the default) keeps the
++  /// detector's own response, i.e. the unmodified frontend.  The grid's per-cell coverage cap is kept
++  /// in every mode, so the branches differ only in WHICH candidates fill the cells, not how many.
++  ///
++  /// FASTPOOL (OV_SELECT=fastpool) is the control for the 3x candidate pool the other modes use: the
++  /// same pool and the same selection code, ranked by the FAST response.  CP1/CP3 are the delayed
++  /// branches: the candidate's own first KLT step has already been tracked, so its displacement or
++  /// forward-backward error decides whether it becomes a birth; they trim with a coverage-first
++  /// round-robin over the cells so the grid constraint survives the trim.
++  enum class SelectMode { FAST = 0, FASTPOOL, RANDOM, L2, FOSTNER, CSR, CSCALE, C_P1, C_P3, PARALLAX, REPLACE };
++  static SelectMode select_mode();
++  /// Frame index from which the selected statistic is allowed to replace the detector response.
++  /// OV_SELECT_START=280 keeps the baseline selection through initialisation, so every branch
++  /// starts from the same state.
++  static int select_start();
++  SelectMode active_select_mode() const;
++
+ protected:
+   /**
+    * @brief Process a new monocular image
+@@ -143,6 +163,31 @@ protected:
+   int pyr_levels = 5;
+   cv::Size win_size = cv::Size(15, 15);
+ 
++  // Frames fed, used only by the throttled frontend diagnostic ("[KLT] f=... tracks=... births=...")
++  size_t frame_count_ = 0;
++
++  /// A candidate held in probation (OV_SELECT=parallax): it is KLT-tracked but is not a feature yet.
++  /// After prob_k frames it is promoted only if its displacement -- minus the accumulated frame-median
++  /// displacement -- reaches prob_theta pixels, i.e. only if it has measurable parallax.  The check is
++  /// the depth signal that is unavailable at birth and that the survival statistics do not measure.
++  struct ProbPoint {
++    size_t id;
++    cv::Point2f pt;         // current position
++    cv::Point2f birth_pt;   // position when it entered probation
++    cv::Point2f birth_m;    // accumulated frame-median displacement at entry
++    size_t birth_frame;
++  };
++  std::vector<ProbPoint> prob_;
++  cv::Point2f med_path_ = cv::Point2f(0.f, 0.f);   // cumulative frame-median displacement
++
++  /// Running median-ish reference of the birth lambda2, for the per-feature measurement noise
++  /// (OV_WEIGHT=l2): sigma_i / sigma_nominal = (l2_ref / l2_i)^(alpha/2).
++  double l2_ref_ = 0.0;
++
++  /// Recent feature deaths, for the T3 prior (OV_WEIGHT=t3): a birth in a neighbourhood that has been
++  /// losing tracks (30 px, last 10 frames) is a less reliable anchor, so its sigma is raised.
++  std::deque<std::pair<size_t, cv::Point2f>> deaths_;
++
+   // Last set of image pyramids
+   std::map<size_t, std::vector<cv::Mat>> img_pyramid_last;
+   std::map<size_t, cv::Mat> img_curr;
+diff --git a/thirdparty/openvins/ov_msckf/src/core/VioManager.cpp b/thirdparty/openvins/ov_msckf/src/core/VioManager.cpp
+index 6a0d7b9..81c01be 100644
+--- a/thirdparty/openvins/ov_msckf/src/core/VioManager.cpp
++++ b/thirdparty/openvins/ov_msckf/src/core/VioManager.cpp
+@@ -447,6 +447,17 @@ void VioManager::do_feature_propagate_update(const ov_core::CameraData &message)
+     // If we have at least 1 that we can add, lets add it!
+     // Note: we remove them from the feat_marg array since we don't want to reuse information...
+     if (valid_amount > 0) {
++      // Experiment D: the anchor slots are the scale reference, so give them to the long tracks the
++      // frontend trusts most (smallest sigma multiplier) instead of to an arbitrary subset.
++      static const bool slam_quality = []() {
++        const char *s = std::getenv("OV_SLAMQ");
++        return s && std::atoi(s) != 0;
++      }();
++      if (slam_quality)
++        std::sort(feats_maxtracks.begin(), feats_maxtracks.end(),
++                  [](const std::shared_ptr<Feature> &a, const std::shared_ptr<Feature> &b) {
++                    return a->sigma_mult > b->sigma_mult;   // most trusted end up at the back
++                  });
+       feats_slam.insert(feats_slam.end(), feats_maxtracks.end() - valid_amount, feats_maxtracks.end());
+       feats_maxtracks.erase(feats_maxtracks.end() - valid_amount, feats_maxtracks.end());
+     }
+@@ -529,6 +540,8 @@ void VioManager::do_feature_propagate_update(const ov_core::CameraData &message)
+   // Perform SLAM delay init and update
+   // NOTE: that we provide the option here to do a *sequential* update
+   // NOTE: this will be a lot faster but won't be as accurate.
++  const size_t n_slam_update = feats_slam_UPDATE.size();
++  const size_t n_slam_delayed = feats_slam_DELAYED.size();
+   std::vector<std::shared_ptr<Feature>> feats_slam_UPDATE_TEMP;
+   while (!feats_slam_UPDATE.empty()) {
+     // Get sub vector of the features we will update with
+@@ -547,6 +560,18 @@ void VioManager::do_feature_propagate_update(const ov_core::CameraData &message)
+   updaterSLAM->delayed_init(state, feats_slam_DELAYED);
+   rT6 = boost::posix_time::microsec_clock::local_time();
+ 
++  // One compact diagnostic line per image.  This is the evidence for whether the filter is being
++  // corrected at all: if accepted falls to zero while offered stays high, the chi2 gate is rejecting
++  // every measurement and the trajectory is running on the IMU alone.  chi2med is the median of
++  // chi2/threshold over the offered features -- at 1.0 the gate is the limiting factor, well below 1
++  // means the filter is over-confident.  PRINT_INFO, so a normal INFO run carries it.
++  PRINT_INFO("[UPD] t=%.3f offered=%d tri_fail=%d chi2_rej=%d accepted=%d chi2med=%.2f "
++             "slam=%zu slam_state=%zu delayed=%zu\n",
++             message.timestamp, updaterMSCKF->last_n_offered, updaterMSCKF->last_n_tri_failed,
++             updaterMSCKF->last_n_chi2_rejected, updaterMSCKF->last_n_accepted,
++             updaterMSCKF->last_chi2_median_ratio, n_slam_update, state->_features_SLAM.size(),
++             n_slam_delayed);
++
+   //===================================================================================
+   // Update our visualization feature set, and clean up the old features
+   //===================================================================================
+diff --git a/thirdparty/openvins/ov_msckf/src/update/UpdaterMSCKF.cpp b/thirdparty/openvins/ov_msckf/src/update/UpdaterMSCKF.cpp
+index 9a00ade..a44d2dc 100644
+--- a/thirdparty/openvins/ov_msckf/src/update/UpdaterMSCKF.cpp
++++ b/thirdparty/openvins/ov_msckf/src/update/UpdaterMSCKF.cpp
+@@ -57,6 +57,13 @@ UpdaterMSCKF::UpdaterMSCKF(UpdaterOptions &options, ov_core::FeatureInitializerO
+ 
+ void UpdaterMSCKF::update(std::shared_ptr<State> state, std::vector<std::shared_ptr<Feature>> &feature_vec) {
+ 
++  // Diagnostics for the caller's per-frame line (see the header)
++  last_n_offered = static_cast<int>(feature_vec.size());
++  last_n_accepted = 0;
++  last_n_chi2_rejected = 0;
++  last_n_tri_failed = 0;
++  last_chi2_median_ratio = 0.0;
++
+   // Return if no features
+   if (feature_vec.empty())
+     return;
+@@ -135,6 +142,7 @@ void UpdaterMSCKF::update(std::shared_ptr<State> state, std::vector<std::shared_
+     // Remove the feature if not a success
+     if (!success_tri || !success_refine) {
+       (*it1)->to_delete = true;
++      last_n_tri_failed++;
+       it1 = feature_vec.erase(it1);
+       continue;
+     }
+@@ -165,6 +173,13 @@ void UpdaterMSCKF::update(std::shared_ptr<State> state, std::vector<std::shared_
+   size_t ct_jacob = 0;
+   size_t ct_meas = 0;
+ 
++  // chi2/threshold per accepted-and-checked feature, for the median the caller reports
++  std::vector<double> chi2_ratios;
++  // per-row measurement variance: the system is whitened by it before compression, so each
++  // feature carries its own sigma (Feature::sigma_mult, set by the frontend)
++  std::vector<double> row_sig2;
++  row_sig2.reserve(max_meas_size);
++
+   // 4. Compute linear system for each feature, nullspace project, and reject
+   auto it2 = feature_vec.begin();
+   while (it2 != feature_vec.end()) {
+@@ -208,7 +223,15 @@ void UpdaterMSCKF::update(std::shared_ptr<State> state, std::vector<std::shared_
+     /// Chi2 distance check
+     Eigen::MatrixXd P_marg = StateHelper::get_marginal_covariance(state, Hx_order);
+     Eigen::MatrixXd S = H_x * P_marg * H_x.transpose();
+-    S.diagonal() += _options.sigma_pix_sq * Eigen::VectorXd::Ones(S.rows());
++    // OV_WGROUP selects which updater consumes the frontend's per-feature quality
++    static const bool use_mult = []() {
++      const char *s = std::getenv("OV_WGROUP");
++      const std::string v = s ? std::string(s) : std::string("both");
++      return v == "both" || v == "msckf";
++    }();
++    const double mult = use_mult ? (*it2)->sigma_mult : 1.0;
++    const double sig2 = _options.sigma_pix_sq * mult * mult;
++    S.diagonal() += sig2 * Eigen::VectorXd::Ones(S.rows());
+     double chi2 = res.dot(S.llt().solve(res));
+ 
+     // Get our threshold (we precompute up to 500 but handle the case that it is more)
+@@ -224,6 +247,7 @@ void UpdaterMSCKF::update(std::shared_ptr<State> state, std::vector<std::shared_
+     // Check if we should delete or not
+     if (chi2 > _options.chi2_multipler * chi2_check) {
+       (*it2)->to_delete = true;
++      last_n_chi2_rejected++;
+       it2 = feature_vec.erase(it2);
+       // PRINT_DEBUG("featid = %d\n", feat.featid);
+       // PRINT_DEBUG("chi2 = %f > %f\n", chi2, _options.chi2_multipler*chi2_check);
+@@ -232,6 +256,8 @@ void UpdaterMSCKF::update(std::shared_ptr<State> state, std::vector<std::shared_
+       // PRINT_DEBUG(ss.str().c_str());
+       continue;
+     }
++    last_n_accepted++;
++    chi2_ratios.push_back(chi2 / std::max(chi2_check, 1e-9));
+ 
+     // We are good!!! Append to our large H vector
+     size_t ct_hx = 0;
+@@ -251,6 +277,8 @@ void UpdaterMSCKF::update(std::shared_ptr<State> state, std::vector<std::shared_
+ 
+     // Append our residual and move forward
+     res_big.block(ct_meas, 0, res.rows(), 1) = res;
++    for (int r = 0; r < res.rows(); ++r)
++      row_sig2.push_back(sig2);
+     ct_meas += res.rows();
+     it2++;
+   }
+@@ -271,6 +299,23 @@ void UpdaterMSCKF::update(std::shared_ptr<State> state, std::vector<std::shared_
+   res_big.conservativeResize(ct_meas, 1);
+   Hx_big.conservativeResize(ct_meas, ct_jacob);
+ 
++  // Weighted least squares: whiten every row by its own sigma before the compression, which
++  // makes the noise isotropic in the compressed space.  With all multipliers equal to 1 this is
++  // exactly the scalar-sigma system the estimator had before.
++  assert((int)row_sig2.size() >= (int)ct_meas);
++  for (size_t r = 0; r < (size_t)ct_meas; ++r) {
++    const double inv = 1.0 / std::sqrt(std::max(row_sig2[r], 1e-12));
++    Hx_big.row((Eigen::Index)r) *= inv;
++    res_big((Eigen::Index)r) *= inv;
++  }
++
++  // Median chi2/threshold: 1.0 means the gate sits right at the residuals, >1 means most features are
++  // being thrown away, <<1 means the filter is over-confident.
++  if (!chi2_ratios.empty()) {
++    std::sort(chi2_ratios.begin(), chi2_ratios.end());
++    last_chi2_median_ratio = chi2_ratios[chi2_ratios.size() / 2];
++  }
++
+   // 5. Perform measurement compression
+   UpdaterHelper::measurement_compress_inplace(Hx_big, res_big);
+   if (Hx_big.rows() < 1) {
+@@ -279,7 +324,8 @@ void UpdaterMSCKF::update(std::shared_ptr<State> state, std::vector<std::shared_
+   rT4 = boost::posix_time::microsec_clock::local_time();
+ 
+   // Our noise is isotropic, so make it here after our compression
+-  Eigen::MatrixXd R_big = _options.sigma_pix_sq * Eigen::MatrixXd::Identity(res_big.rows(), res_big.rows());
++  // already whitened: unit noise
++  Eigen::MatrixXd R_big = Eigen::MatrixXd::Identity(res_big.rows(), res_big.rows());
+ 
+   // 6. With all good features update the state
+   StateHelper::EKFUpdate(state, Hx_order_big, Hx_big, res_big, R_big);
+diff --git a/thirdparty/openvins/ov_msckf/src/update/UpdaterMSCKF.h b/thirdparty/openvins/ov_msckf/src/update/UpdaterMSCKF.h
+index 149ea45..f4818cc 100644
+--- a/thirdparty/openvins/ov_msckf/src/update/UpdaterMSCKF.h
++++ b/thirdparty/openvins/ov_msckf/src/update/UpdaterMSCKF.h
+@@ -67,6 +67,16 @@ public:
+    */
+   void update(std::shared_ptr<State> state, std::vector<std::shared_ptr<ov_core::Feature>> &feature_vec);
+ 
++  // Diagnostics of the last update, for the runner's per-frame line.  How many features were offered
++  // (after the track-length sort and the max_msckf_in_update cap), how many survived triangulation and
++  // the chi2 gate, and how many the gate threw away.  A filter whose acceptance collapses to zero is no
++  // longer being corrected by vision, which is what a path ratio in the tens looks like from outside.
++  int last_n_offered = 0;
++  int last_n_accepted = 0;
++  int last_n_chi2_rejected = 0;
++  int last_n_tri_failed = 0;
++  double last_chi2_median_ratio = 0.0;   // median(chi2 / threshold) over the offered features
++
+ protected:
+   /// Options used during update
+   UpdaterOptions _options;
+diff --git a/thirdparty/openvins/ov_msckf/src/update/UpdaterSLAM.cpp b/thirdparty/openvins/ov_msckf/src/update/UpdaterSLAM.cpp
+index a769d01..ae7a2a3 100644
+--- a/thirdparty/openvins/ov_msckf/src/update/UpdaterSLAM.cpp
++++ b/thirdparty/openvins/ov_msckf/src/update/UpdaterSLAM.cpp
+@@ -225,7 +225,46 @@ void UpdaterSLAM::delayed_init(std::shared_ptr<State> state, std::vector<std::sh
+     // Measurement noise matrix
+     double sigma_pix_sq =
+         ((int)feat.featid < state->_options.max_aruco_features) ? _options_aruco.sigma_pix_sq : _options_slam.sigma_pix_sq;
++    // per-feature measurement-noise multiplier from the frontend (1 = nominal), if this updater
++    // is selected to consume it (OV_WGROUP=both|msckf|slam)
++    static const bool use_mult = []() {
++      const char *s = std::getenv("OV_WGROUP");
++      const std::string v = s ? std::string(s) : std::string("both");
++      return v == "both" || v == "slam";
++    }();
++    // OV_WINIT=0 applies the multiplier only in the SLAM update, not in the
++    // delayed landmark initialization.  The default (unset/1) preserves the
++    // original D behavior.
++    static const bool weight_init = []() {
++      const char *s = std::getenv("OV_WINIT");
++      return !s || std::atoi(s) != 0;
++    }();
++    if (use_mult && weight_init)
++      sigma_pix_sq *= (*it2)->sigma_mult * (*it2)->sigma_mult *
++                      (*it2)->sigma_mult_init * (*it2)->sigma_mult_init;
+     Eigen::MatrixXd R = sigma_pix_sq * Eigen::MatrixXd::Identity(res.rows(), res.rows());
++    // l2cov supplies an anisotropic 2x2 pixel covariance; identity for all other modes.
++    bool aniso_init = false;
++    if (use_mult && weight_init && res.rows() % 2 == 0) {
++      const Eigen::Matrix2d C = (*it2)->init_cov;
++      aniso_init = ((C - Eigen::Matrix2d::Identity()).cwiseAbs().maxCoeff() > 1e-9);
++      for (int k = 0; k < res.rows() / 2; ++k)
++        R.block<2, 2>(2 * k, 2 * k) = sigma_pix_sq * C;
++    }
++    // StateHelper::initialize assumes isotropic noise because its QR step rotates the
++    // residual.  Whiten the local system first, then hand it an identity R.
++    if (aniso_init) {
++      Eigen::LLT<Eigen::MatrixXd> llt(R);
++      if (llt.info() != Eigen::Success) {
++        it2 = feature_vec.erase(it2);
++        continue;
++      }
++      Eigen::MatrixXd W = llt.matrixL().solve(Eigen::MatrixXd::Identity(res.rows(), res.rows()));
++      H_x = W * H_x;
++      H_f = W * H_f;
++      res = W * res;
++      R.setIdentity();
++    }
+ 
+     // Try to initialize, delete new pointer if we failed
+     double chi2_multipler =
+@@ -391,6 +430,15 @@ void UpdaterSLAM::update(std::shared_ptr<State> state, std::vector<std::shared_p
+     Eigen::MatrixXd S = H_xf * P_marg * H_xf.transpose();
+     double sigma_pix_sq =
+         ((int)feat.featid < state->_options.max_aruco_features) ? _options_aruco.sigma_pix_sq : _options_slam.sigma_pix_sq;
++    // per-feature measurement-noise multiplier from the frontend (1 = nominal), if this updater
++    // is selected to consume it (OV_WGROUP=both|msckf|slam)
++    static const bool use_mult = []() {
++      const char *s = std::getenv("OV_WGROUP");
++      const std::string v = s ? std::string(s) : std::string("both");
++      return v == "both" || v == "slam";
++    }();
++    if (use_mult)
++      sigma_pix_sq *= (*it2)->sigma_mult * (*it2)->sigma_mult;
+     S.diagonal() += sigma_pix_sq * Eigen::VectorXd::Ones(S.rows());
+     double chi2 = res.dot(S.llt().solve(res));
+ 
+diff --git a/tools/gauge_free_score.py b/tools/gauge_free_score.py
+index d7eb759..8391de4 100644
+--- a/tools/gauge_free_score.py
++++ b/tools/gauge_free_score.py
+@@ -9,6 +9,7 @@ timestamp in **nanoseconds** (a seconds value times 1e9), hence the `--time-scal
+         --ref build\\inputs\\fs_ref_w1.csv
+ """
+ import argparse
++import os
+ import sys
+ 
+ import numpy as np
+@@ -74,6 +75,15 @@ def main(argv=None):
+     parser.add_argument("--max-gap", type=float, default=0.2, help="largest allowed reference time gap (s)")
+     args = parser.parse_args(argv)
+ 
++    # Check the two inputs before reading them.  Without this, a run whose estimator failed (no
++    # trajectory was written) reached the scorer as a traceback from load_estimate, which reads like a
++    # bug here rather than an estimator that stopped; saying which file is missing is the difference
++    # between a minute and a diagnostic session.
++    for label, path in (("estimate", args.est), ("reference", args.ref)):
++        if not os.path.exists(path):
++            print(f"  the {label} file does not exist: {path}")
++            return 1
++
+     est_t, est_p = load_estimate(args.est, args.time_scale)
+     ref_t, ref_p = load_reference(args.ref)
+     if len(est_t) == 0 or len(ref_t) == 0:

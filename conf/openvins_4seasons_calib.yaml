@@ -1,0 +1,47 @@
+%YAML:1.0
+# Camera-IMU calibration for the 4Seasons drive, in the format OpenVINS's ov_core::YamlParser reads for
+# `relative_config_imucam`: a `cam<N>` node with these keys.
+#
+# Values come from conf/4seasons_fs_full.yaml, the settings file this project already used:
+#   intrinsics        <- Camera1.fx, Camera1.fy, Camera1.cx, Camera1.cy
+#   distortion_coeffs <- Camera1.k1, k2, p1, p2   (all zero, see below)
+#   resolution        <- Camera.width, Camera.height
+#   T_imu_cam         <- the INVERSE of IMU.T_b_c1 (see note 2)
+#
+# Two things worth knowing before editing this file.
+#
+# 1. The frames in this dataset have ALREADY BEEN UNDISTORTED when they were extracted, which is why the distortion
+#    coefficients are zero and the model is pinhole.  The original 4Seasons camera is a wide-angle one with
+#    significant distortion; writing those coefficients here would undistort a second time.  For the same reason
+#    calib_cam_intrinsics is false in the estimator config: there is no distortion left for the filter to find.
+#
+# 2. T_imu_cam holds the INVERSE of IMU.T_b_c1, and that was decided by measurement, not by reading the name.
+#
+#    The key name and the value disagree, so this was settled by running both.  On the 900-frame window, scored with
+#    tools/gauge_free_score.py:
+#
+#      T_imu_cam = IMU.T_b_c1          RMS 3D 14.51 m   path ratio 1.225
+#      T_imu_cam = IMU.T_b_c1 inverse  RMS 3D  3.75 m   path ratio 0.932
+#
+#    The inverse is 3.9x better and its scale is nearly right (0.932 against a reference of 1.0), so the inverse is
+#    what goes here.  OpenVINS's own shipped example files name this key `T_cam_imu`, which is consistent with the
+#    value being the camera-from-IMU transform; the parser in this version asks for `T_imu_cam` and never finds
+#    `T_cam_imu`, which is why their examples leave the extrinsics at identity.
+#
+#    Reproduce with the variant that was measured against: swap this block for IMU.T_b_c1 as written in
+#    conf/4seasons_fs_full.yaml and rerun the same window.
+
+cam0:
+  camera_model: pinhole
+  distortion_model: radtan
+  intrinsics: [501.4757919306, 501.4757919306, 421.7953735163, 167.6579949250]
+  distortion_coeffs: [0.0, 0.0, 0.0, 0.0]
+  resolution: [800, 400]
+  timeshift_cam_imu: 0.0
+  T_imu_cam:
+    - [-0.9998852242, -0.0135229611, 0.0068313851, 0.1754121674]
+    - [-0.0068901619, 0.0043046371, -0.9999669974, 0.0036894334]
+    - [0.0134931082, -0.9998992948, -0.0043973183, -0.0581061269]
+    - [0.0000000000, 0.0000000000, 0.0000000000, 1.0000000000]
+  cam_overlaps: []
+  rostopic: /camera/image_raw

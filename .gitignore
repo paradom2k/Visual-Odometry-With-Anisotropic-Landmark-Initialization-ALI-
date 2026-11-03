@@ -1,0 +1,21 @@
+# Build and runtime artefacts
+build/
+sol/
+*.log
+*.score.txt
+
+# MSVC intermediates
+*.pdb
+*.ilk
+*.exp
+*.iobj
+*.ipdb
+
+# Python
+__pycache__/
+*.pyc
+
+# Local editor files
+.vscode/
+.idea/
+.DS_Store
