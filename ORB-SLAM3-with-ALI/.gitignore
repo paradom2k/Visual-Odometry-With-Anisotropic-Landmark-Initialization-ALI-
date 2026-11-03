@@ -1,0 +1,17 @@
+# anchors
+build/
+build_dbg/
+sol/
+reports/
+*.obj
+*.lib
+*.pdb
+*.ilk
+*.exp
+*.map
+
+# editor / OS
+.vs/
+.vscode/
+Thumbs.db
+desktop.ini

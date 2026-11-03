@@ -1,0 +1,19 @@
+# Normalise text to LF in the repository; the tree is built on Windows and MSVC accepts both.
+* text=auto
+
+*.h    text
+*.hpp  text
+*.cc   text
+*.cpp  text
+*.md   text
+*.txt  text
+*.conf text
+*.py   text
+
+*.png  binary
+*.jpg  binary
+*.exe  binary
+*.dll  binary
+*.lib  binary
+*.bag  binary
+*.csv  text
