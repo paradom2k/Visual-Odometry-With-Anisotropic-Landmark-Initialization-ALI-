@@ -157,7 +157,7 @@ struct RunConf {
   std::string path;  // the .conf file itself
   std::string name;
   std::string settings;
-  // Which estimator to run.  ALI-VINS ships one: the OpenVINS MSCKF + SLAM kernel with ALI.
+  // ALI-VINS uses one estimator: KLT tracking and MSCKF + SLAM design adopted from OpenVINS, with GFTT detection and ALI.
   // The key is still parsed so configurations written for the original schema keep working.
   std::string engine = "openvins";
   std::string dataset_root;
@@ -284,7 +284,7 @@ std::string Describe(const RunConf& conf) {
   out << "name        : " << conf.name << "\n";
   out << "conf file   : " << conf.path << "\n";
   out << "engine      : " << conf.engine
-      << (conf.engine == "openvins" ? "  (OpenVINS MSCKF + SLAM + ALI)" : "  (legacy engine)") << "\n";
+      << (conf.engine == "openvins" ? "  (GFTT + KLT, MSCKF + SLAM, ALI)" : "  (legacy engine)") << "\n";
   out << "settings    : " << conf.settings_path << (FileExists(conf.settings_path) ? "  [ok]" : "  [MISSING]")
       << "\n";
   out << "dataset root: " << conf.dataset_root_path
@@ -543,7 +543,7 @@ bool g_echo_status_to_stdout = false;
 /// this branch has crashed during development, and a crash in a child process is reported in the log and the
 /// window survives, which is not true of a crash in a worker thread.
 ///
-/// ALI-VINS has one estimator: OpenVINS with the MSCKF + SLAM branches and ALI.  The engine key is
+/// ALI-VINS uses KLT tracking and MSCKF + SLAM design adopted from OpenVINS, with GFTT detection and ALI.  The engine key is
 /// still read so existing configurations keep their schema, but it selects the same runner.
 std::string RunnerExecutable(const std::string& engine) {
   (void)engine;
@@ -1950,7 +1950,7 @@ int main(int argc, char** argv) {
     else if (arg == "--plot" && has_next) g_startup_estimate = argv[++i];
     else if (arg == "--help" || arg == "-h") {
       std::printf(
-          "ali-vins -- OpenVINS KLT frontend, MSCKF + SLAM, anisotropic landmark initialization\n\n"
+          "ali-vins -- GFTT + KLT frontend, MSCKF + SLAM, anisotropic landmark initialization\n\n"
           "  (no arguments)                  open the window: choose a configuration from config/ and run it\n"
           "  --plot <traj> [--ref <ref>]     open the window already showing this trajectory\n"
           "  --list                          list the configurations found in config/, with their paths checked\n"

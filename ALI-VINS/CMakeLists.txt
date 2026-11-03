@@ -1,4 +1,5 @@
-# ALI-VINS -- minimal OpenVINS + SLAM + ALI port with the existing Win32 UI.
+# ALI-VINS -- an independent implementation that adopts the OpenVINS KLT tracking and
+# MSCKF + SLAM design, with GFTT detection and ALI landmark initialization.
 #
 # Layout:
 #   bin/      ali_vins_app.exe, ali_vins_run.exe, runtime DLLs
@@ -109,4 +110,4 @@ if(ALI_STAGED_DLLS)
     COMMENT "ALI-VINS: staging runtime DLLs into bin/")
 endif()
 
-message(STATUS "ali_vins ${PROJECT_VERSION}: app + OpenVINS driver, output to ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
+message(STATUS "ali_vins ${PROJECT_VERSION}: app + KLT/MSCKF/SLAM driver, output to ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")

@@ -1,4 +1,4 @@
-// ali_vins -- driver for the OpenVINS kernel.
+// ali_vins -- driver for the KLT/MSCKF + SLAM estimator.
 //
 // Feeds a 4Seasons manifest plus its IMU csv into ov_msckf::VioManager and writes the resulting trajectory in the
 // scorer's format ("<timestamp> x y z"), which is what the rest of this project already consumes.
@@ -8,8 +8,8 @@
 //
 // This replaces the old VINS feature_tracker + hand-written g2o sliding window, which tracked well for ~30 s and
 // then diverged (measured: |v| 405 m/s, positions 50 km out, path ratio 22.8 over the full drive).  The estimator
-// here is OpenVINS's MSCKF, used as-is: nothing in thirdparty/openvins is modified except the five variadic print
-// macros that MSVC cannot parse.
+// KLT tracking and MSCKF + SLAM estimation are adopted from OpenVINS; the local third-party tree is ROS-free and
+// only its MSVC print macros are adapted.
 
 #include "core/VioManager.h"
 #include "core/VioManagerOptions.h"
@@ -146,7 +146,7 @@ int main(int argc, char** argv) {
     else if (arg == "--quiet") verbose = false;
     else if (arg == "--help" || arg == "-h") {
       std::printf(
-          "ali_vins_run -- drives the OpenVINS MSCKF kernel over a 4Seasons manifest.\n\n"
+          "ali_vins_run -- drives the KLT/MSCKF + SLAM estimator over a 4Seasons manifest.\n\n"
           "  --manifest <file>   \"<timestamp> <image path>\" per line\n"
           "  --config <yaml>     OpenVINS estimator configuration; it names its own calibration files\n"
           "  --imu <file>        \"t,gx,gy,gz,ax,ay,az\" per line\n"
@@ -221,7 +221,7 @@ int main(int argc, char** argv) {
   }
   std::printf("[I] max features per frame: %d (%s)\n", params.num_pts,
               max_features > 0 ? "conf override" : "YAML");
-  std::printf("[I] OpenVINS configured: %d camera(s), %d points, %d clones, dyn init %s\n",
+  std::printf("[I] ALI-VINS configured: %d camera(s), %d points, %d clones, dyn init %s\n",
               params.state_options.num_cameras, params.num_pts, params.state_options.max_clone_size,
               params.init_options.init_dyn_use ? "on" : "off");
   std::fflush(stdout);

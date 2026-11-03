@@ -1,4 +1,4 @@
-# OpenVINS as ALI-VINS's estimator kernel, built without ROS.
+# KLT tracking and MSCKF + SLAM estimation core adopted from OpenVINS, built without ROS.
 #
 # Source: the ROS-free ov_core + ov_init + ov_msckf tree used by ALI-VINS.
 # Dependency map:

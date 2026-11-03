@@ -1,6 +1,8 @@
 # ALI-VINS
 
-**ALI-VINS** 是一个最小可构建的 OpenVINS + SLAM + ALI 工程：保留 OpenVINS 的 KLT 前端、MSCKF + SLAM 双分支、ALI（Anisotropic Landmark Initialization）以及原有 Win32 UI，只把这一条运行链路拆成独立工程。
+**ALI-VINS** 采用 OpenVINS 的 KLT 跟踪和 MSCKF + SLAM 估计设计，但检测器使用新的 GFTT（block-wise Shi--Tomasi），并在 landmark 初始化阶段使用 ALI（Anisotropic Landmark Initialization）。项目保留轻量的 Win32 UI，形成一个独立的视觉惯性里程计实现。
+
+ALI-VINS 是一个独立实现，不是 OpenVINS 的分支或移植；它复用 OpenVINS 的 KLT 跟踪与 MSCKF/SLAM 设计，并替换了检测器（GFTT）和 landmark 初始化策略（ALI）。
 
 ## 目录
 
@@ -65,7 +67,7 @@ bin\ali_vins_app.exe --run 4seasons_office_loop_5
 
 `--frames N` 可以覆盖配置里的帧数；`--no-score` 跳过打分。
 
-## ALI 与 SLAM 分支
+## ALI 与 MSCKF/SLAM 设计
 
 - 实验配置都有 `max_slam: 50`、`max_slam_in_update: 25`、`dt_slam_delay: 1`、`feat_rep_slam: ANCHORED_MSCKF_INVERSE_DEPTH`。这个 OpenVINS 版本没有 `use_slam` 开关，`max_slam > 0` 就是 SLAM 分支的开关；MSCKF 仍然同时运行。
 - ALI 由 driver 默认设置 `OV_WEIGHT=l2cov` 开启。要跑无加权 baseline，在启动前设置空值：
@@ -83,7 +85,7 @@ bin\ali_vins_run.exe ...
 
 - `thirdparty/openvins/ov_core/src/track/Grider_GRID.h` 中每个网格单元调用 `cv::goodFeaturesToTrack`，`qualityLevel = 0.01`，`minDistance = min_px_dist`（当前配置 15），然后继续使用原有的亚像素细化。
 - OpenVINS 的 mask 语义是 255=禁止检测，而 GFTT 是 255=有效区域，所以代码对 ROI mask 做了 `bitwise_not`。
-- KLT 跟踪、网格布局、SLAM 分支和 ALI 都没有改动；每帧最大特征数由 `.conf` 的 `max_features` 控制（见下一节）。
+- KLT 跟踪和网格布局沿用 OpenVINS；检测器改为 GFTT；ALI 用于 landmark 初始化。每帧最大特征数由 `.conf` 的 `max_features` 控制（见下一节）。
 
 默认 GFTT；要回到原 FAST 做 A/B，设置：
 
@@ -135,6 +137,6 @@ ALI 默认开启，`gauge_free_score.py` 做 yaw + translation（scale 固定 1�
 
 ## 说明
 
-- 这是最小移植，`thirdparty/openvins` 仍是 ROS-free 的 `ov_core + ov_init + ov_msckf`；未引入 ROS、PCL、Pangolin、g2o、Sophus。
+- 这是 ALI-VINS 的最小实现，复用了 ROS-free 的 `ov_core + ov_init + ov_msckf`；未引入 ROS、PCL、Pangolin、g2o、Sophus。
 - `CpiV2.cpp` 未编译：动态初始化只用 `CpiV1`，保留它只会多一个非常慢的编译单元。
 - OpenVINS 上游是 GPLv3；对外分发时需保留 `thirdparty/openvins/LICENSE`。
