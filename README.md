@@ -5,7 +5,7 @@ Initialization (ALI)** for landmark-based visual odometry and SLAM:
 
 | Directory | Role |
 |---|---|
-| [`ALI-VINS/`](ALI-VINS/README.md) | The proposed independent implementation: GFTT detection, KLT tracking and MSCKF + SLAM design adopted from OpenVINS, with ALI at landmark initialization. |
+| [`ALI-VINS/`](ALI-VINS/README.md) | The proposed independent implementation: GFTT detection, KLT tracking + SLAM design adopted from OpenVINS, with ALI at landmark initialization. |
 | [`openvins-with-ali/`](openvins-with-ali/README.md) | OpenVINS integration: ALI supplies the anisotropic covariance for SLAM landmark initialization. |
 | [`ORB-SLAM3-with-ALI/`](ORB-SLAM3-with-ALI/README.md) | ORB-SLAM3 integration: ALI supplies a structure-tensor covariance for the observations used in map-point triangulation. |
 
