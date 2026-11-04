@@ -1,0 +1,64 @@
+%YAML:1.0
+
+# VINS-Mono configuration for the 4Seasons camera.  The images are the dataset's undistorted
+# 800x400 pinhole frames, so distortion is zero.  Rotation/translation are imu^R_cam and imu^T_cam,
+# the same convention as the VINS-Mono examples (camera pose in the IMU frame).
+
+model_type: PINHOLE
+camera_name: camera
+image_width: 800
+image_height: 400
+distortion_parameters:
+   k1: 0.0
+   k2: 0.0
+   p1: 0.0
+   p2: 0.0
+projection_parameters:
+   fx: 501.4757919305817
+   fy: 501.4757919305817
+   cx: 421.7953735163109
+   cy: 167.65799492501083
+
+estimate_extrinsic: 0
+extrinsicRotation: !!opencv-matrix
+   rows: 3
+   cols: 3
+   dt: d
+   data: [-0.9998852242, -0.0135229611, 0.0068313851,
+          -0.0068901619, 0.0043046371, -0.9999669974,
+           0.0134931082, -0.9998992948, -0.0043973183]
+extrinsicTranslation: !!opencv-matrix
+   rows: 3
+   cols: 1
+   dt: d
+   data: [0.1754121674, 0.0036894334, -0.0581061269]
+
+max_cnt: 150
+min_dist: 30
+freq: 10
+F_threshold: 1.0
+show_track: 0
+equalize: 1
+fisheye: 0
+
+max_solver_time: 0.04
+max_num_iterations: 8
+keyframe_parallax: 10.0
+
+acc_n: 0.089
+gyr_n: 0.0076
+acc_w: 1.0e-4
+gyr_w: 2.0e-6
+g_norm: 9.81007
+
+estimate_td: 0
+td: 0.0
+rolling_shutter: 0
+rolling_shutter_tr: 0.0
+
+ali: 1
+ali_window: 15
+ali_sigma: 1.5
+ali_clip_lo: 0.25
+ali_clip_hi: 4.0
+ali_ref_alpha: 0.005

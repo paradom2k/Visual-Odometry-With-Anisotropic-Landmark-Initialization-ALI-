@@ -10,6 +10,7 @@ the components below retain their own licenses.
 |---|---|---|---|
 | OpenVINS (`ov_core`, `ov_init`, `ov_msckf`) | https://github.com/rpng/open_vins | **GPL-3.0** | `thirdparty/openvins/`, including `thirdparty/openvins/LICENSE` |
 | OpenVINS CPI files (`ov_core/src/cpi/`) | Upstream OpenVINS subcomponent | MIT (headers retained) | Included in the vendored tree |
+| VINS-Mono, camodocal (`vins-mono-with-ALI/thirdparty/`) | https://github.com/HKUST-Aerial-Robotics/VINS-Mono | **GPL-3.0** | `vins-mono-with-ALI/`, including its `LICENSE` |
 
 OpenVINS is the estimation kernel.  The ROS nodes, stand-alone entry points and
 tests were removed when it was vendored; the remaining source has been patched
