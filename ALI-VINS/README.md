@@ -7,21 +7,21 @@
 ```
 ALI-VINS/
   CMakeLists.txt          CMake 工程
-  build\_msvc.bat          使用 E:\\jo\_gvil\\visual studio 的 MSVC 和 E:\\jo\_gvil\\cmake 构建
+  build\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_msvc.bat          使用 E:\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\jo\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_gvil\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\visual studio 的 MSVC 和 E:\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\jo\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_gvil\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\cmake 构建
   cmake/openvins.cmake    OpenVINS 源码子集、依赖路径和链接项
   src/
-    app\_main.cpp          原有 Win32 UI / --list / --run / --plot / --compare
-    ali\_vins\_run.cpp      driver：manifest + IMU -> VioManager -> 轨迹
-  thirdparty/openvins/    ov\_core + ov\_init + ov\_msckf（无 ROS，无 ArUco）
+    app\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_main.cpp          原有 Win32 UI / --list / --run / --plot / --compare
+    ali\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_vins\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_run.cpp      driver：manifest + IMU -> VioManager -> 轨迹
+  thirdparty/openvins/    ov\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_core + ov\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_init + ov\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_msckf（无 ROS，无 ArUco）
   config/
-    4seasons\_neighborhood\_3.conf
-    4seasons\_office\_loop\_5.conf
-    openvins\_4seasons.yaml / \_calib.yaml / \_imu.yaml
-    openvins\_4seasons\_office.yaml / \_office\_calib.yaml
+    4seasons\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_neighborhood\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_3.conf
+    4seasons\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_office\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_loop\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_5.conf
+    openvins\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_4seasons.yaml / \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_calib.yaml / \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_imu.yaml
+    openvins\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_4seasons\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_office.yaml / \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_office\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_calib.yaml
     data/                 两个序列的 manifest 与 reference
   tools/
-    gauge\_free\_score.py   UI 使用的 ATE 打分器
-    bag\_extract.py, bag\_inspect.py, make\_manifests.py
+    gauge\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_free\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_score.py   UI 使用的 ATE 打分器
+    bag\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_extract.py, bag\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_inspect.py, make\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_manifests.py
   bin/                    构建产物和运行期 DLL
   sol/                    轨迹、日志、score
 ```
@@ -29,7 +29,7 @@ ALI-VINS/
 ## 构建
 
 ```bat
-build\_msvc.bat
+build\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_msvc.bat
 ```
 
 需要以下依赖：
@@ -45,55 +45,55 @@ build\_msvc.bat
 |Ceres|1.14.0|
 |Boost|1.92.0|
 
-四个依赖根都可以通过参数覆盖：`build\_msvc.bat \[OpenCV] \[Eigen] \[Ceres] \[Boost] \[jobs]`。
+四个依赖根都可以通过参数覆盖：`build\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_msvc.bat \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\[OpenCV] \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\[Eigen] \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\[Ceres] \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\[Boost] \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\[jobs]`。
 
 ## 运行
 
 GUI：
 
 ```bat
-bin\\ali\_vins\_app.exe
+bin\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\ali\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_vins\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_app.exe
 ```
 
 Headless：
 
 ```bat
-bin\\ali\_vins\_app.exe --list
-bin\\ali\_vins\_app.exe --run 4seasons\_neighborhood\_3
-bin\\ali\_vins\_app.exe --run 4seasons\_office\_loop\_5
+bin\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\ali\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_vins\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_app.exe --list
+bin\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\ali\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_vins\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_app.exe --run 4seasons\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_neighborhood\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_3
+bin\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\ali\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_vins\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_app.exe --run 4seasons\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_office\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_loop\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_5
 ```
 
 `--frames N` 可以覆盖配置里的帧数；`--no-score` 跳过打分。
 
 ## ALI 与 MSCKF/SLAM 设计
 
-* 实验配置都有 `max\_slam: 50`、`max\_slam\_in\_update: 25`、`dt\_slam\_delay: 1`、`feat\_rep\_slam: ANCHORED\_MSCKF\_INVERSE\_DEPTH`。该估计器没有 `use\_slam` 开关，`max\_slam > 0` 就是 SLAM 分支的开关；MSCKF 仍然同时运行。
-* ALI 由 driver 默认设置 `OV\_WEIGHT=l2cov` 开启。要跑无加权 baseline，在启动前设置空值：
+* 实验配置都有 `max\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_slam: 50`、`max\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_slam\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_in\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_update: 25`、`dt\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_slam\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_delay: 1`、`feat\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_rep\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_slam: ANCHORED\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_MSCKF\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_INVERSE\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_DEPTH`。该估计器没有 `use\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_slam` 开关，`max\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_slam > 0` 就是 SLAM 分支的开关；MSCKF 仍然同时运行。
+* ALI 由 driver 默认设置 `OV\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_WEIGHT=l2cov` 开启。要跑无加权 baseline，在启动前设置空值：
 
 ```bat
-set OV\_WEIGHT=
-bin\\ali\_vins\_run.exe ...
+set OV\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_WEIGHT=
+bin\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\ali\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_vins\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_run.exe ...
 ```
 
-* ALI 的唯一实现改动是在 `ov\_msckf/src/update/UpdaterSLAM.cpp` 的 `delayed\_init`：把整块 `R` 的稠密 LLT 改成按 2×2 测量块逐块白化。`R` 本来就是块对角的，数学等价；1000 帧上与原实现的最大位置差为 `1.2e-6 m`，但 2000 帧从 \~240 s 降到 \~86 s。
+* ALI 的唯一实现改动是在 `ov\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_msckf/src/update/UpdaterSLAM.cpp` 的 `delayed\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_init`：把整块 `R` 的稠密 LLT 改成按 2×2 测量块逐块白化。`R` 本来就是块对角的，数学等价；1000 帧上与原实现的最大位置差为 `1.2e-6 m`，但 2000 帧从 \~240 s 降到 \~86 s。
 
 ## 特征提取器
 
 ALI-VINS 使用  **block-wise Shi-Tomasi (GFTT)** 特征提取器：
 
-* 每个网格单元调用 `cv::goodFeaturesToTrack`，`qualityLevel = 0.01`，`minDistance = min\_px\_dist`（当前配置为 15），然后继续使用亚像素细化。
-* ROI mask 采用 255=有效区域；代码对内部 mask 做 `bitwise\_not`，以适配 GFTT 接口。
-* KLT 跟踪和网格布局保持不变；检测器使用 GFTT；ALI 用于 landmark 初始化。每帧最大特征数由 `.conf` 的 `max\_features` 控制（见下一节）。
+* 每个网格单元调用 `cv::goodFeaturesToTrack`，`qualityLevel = 0.01`，`minDistance = min\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_px\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_dist`（当前配置为 15），然后继续使用亚像素细化。
+* ROI mask 采用 255=有效区域；代码对内部 mask 做 `bitwise\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_not`，以适配 GFTT 接口。
+* KLT 跟踪和网格布局保持不变；检测器使用 GFTT；ALI 用于 landmark 初始化。每帧最大特征数由 `.conf` 的 `max\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_features` 控制（见下一节）。
 
 默认 GFTT；要回到 FAST 做 A/B，设置：
 
 ```bat
-set OV\_DETECTOR=fast
+set OV\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_DETECTOR=fast
 ```
 
 ## 每帧最大特征数
 
-`.conf` 新增 `max\_features`。UI 解析后通过 `--max-features` 传给 driver；driver 只覆盖估计器的 `num\_pts`（初始化完成后的每帧上限），`init\_max\_features` 仍保持 YAML 的 200，避免把动态初始化行为一起改掉。当前两个 conf 已设为 `max\_features = 600`。
+`.conf` 新增 `max\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_features`。UI 解析后通过 `--max-features` 传给 driver；driver 只覆盖估计器的 `num\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_pts`（初始化完成后的每帧上限），`init\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_max\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_features` 仍保持 YAML 的 200，避免把动态初始化行为一起改掉。当前两个 conf 已设为 `max\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_features = 600`。
 
 GFTT 下 neighborhood\_3 前 2000 帧的上限筛选：
 
@@ -109,11 +109,11 @@ GFTT 下 neighborhood\_3 前 2000 帧的上限筛选：
 
 https://cvg.cit.tum.de/data/datasets/4seasons-dataset/download
 
-本文使用 `neighborhood\_3` 和 `office\_loop\_5` 两个 recording。下载后请按 `config/` 中的配置文件准备/更新 manifest、IMU 和 reference；仓库不包含原始图像、IMU 或 groundtruth。
+本文使用 `neighborhood\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_3` 和 `office\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_loop\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_5` 两个 recording。下载后请按 `config/` 中的配置文件准备/更新 manifest、IMU 和 reference；仓库不包含原始图像、IMU 或 groundtruth。
 
 ## 说明
 
-* 这是 ALI-VINS 的最小实现，复用了 ROS-free 的 `ov\_core + ov\_init + ov\_msckf`；未引入 ROS、PCL、Pangolin、g2o、Sophus。
+* 这是 ALI-VINS 的最小实现，复用了 ROS-free 的 `ov\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_core + ov\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_init + ov\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_msckf`；未引入 ROS、PCL、Pangolin、g2o、Sophus。
 * `CpiV2.cpp` 未编译：动态初始化只用 `CpiV1`，保留它只会多一个非常慢的编译单元。
 * OpenVINS 上游是 GPLv3；对外分发时需保留 `thirdparty/openvins/LICENSE`。
 

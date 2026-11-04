@@ -45,8 +45,13 @@ def load_reference(path):
     return np.array(stamps), np.array(positions)
 
 
-def yaw_translation_align(estimate, reference):
-    """Rotation about z plus translation, scale fixed at 1 (the gauge a monocular VI system has)."""
+def yaw_translation_align(estimate, reference, align_scale=False):
+    """Rotation about z plus translation and, optionally, scale.
+
+    A monocular VI system observes scale through its inertial unit; a purely visual monocular run does
+    not.  `align_scale` is for the latter: it reports the similarity-aligned error, and the run is then
+    comparable in shape but not in metric scale.
+    """
     est_xy = estimate[:, :2]
     ref_xy = reference[:, :2]
     est_centred = est_xy - est_xy.mean(axis=0)
@@ -63,8 +68,16 @@ def yaw_translation_align(estimate, reference):
     rotated[:, 0] = cos_yaw * estimate[:, 0] - sin_yaw * estimate[:, 1]
     rotated[:, 1] = sin_yaw * estimate[:, 0] + cos_yaw * estimate[:, 1]
     rotated[:, 2] = estimate[:, 2]
+    scale = 1.0
+    if align_scale:
+        est_rot = rotated - rotated.mean(axis=0)
+        ref_cent = reference - reference.mean(axis=0)
+        denom = float((est_rot * est_rot).sum())
+        if denom > 0.0:
+            scale = float((est_rot * ref_cent).sum() / denom)
+        rotated = rotated * scale
     rotated -= rotated.mean(axis=0) - reference.mean(axis=0)
-    return rotated, np.degrees(yaw)
+    return rotated, np.degrees(yaw), scale
 
 
 def main(argv=None):
@@ -73,6 +86,8 @@ def main(argv=None):
     parser.add_argument("--ref", required=True)
     parser.add_argument("--time-scale", type=float, default=1e-9)
     parser.add_argument("--max-gap", type=float, default=0.2, help="largest allowed reference time gap (s)")
+    parser.add_argument("--align-scale", action="store_true",
+                        help="also fit scale (for purely visual monocular runs, which do not observe it)")
     args = parser.parse_args(argv)
 
     # Check the two inputs before reading them.  Without this, a run whose estimator failed (no
@@ -101,14 +116,15 @@ def main(argv=None):
         print(f"  only {int(keep.sum())} pose(s) overlap the reference window -- nothing to score")
         return 1
 
-    aligned, yaw = yaw_translation_align(est_p[keep], interpolated[keep])
+    aligned, yaw, scale = yaw_translation_align(est_p[keep], interpolated[keep], args.align_scale)
     error = np.linalg.norm(aligned - interpolated[keep], axis=1)
     error_2d = np.linalg.norm(aligned[:, :2] - interpolated[keep][:, :2], axis=1)
     est_path = np.linalg.norm(np.diff(est_p[keep], axis=0), axis=1).sum()
     ref_path = np.linalg.norm(np.diff(interpolated[keep], axis=0), axis=1).sum()
 
     print(f"  {args.est}")
-    print(f"  matched {int(keep.sum())} pose(s) over {high - low:.1f} s, yaw alignment {yaw:+.2f} deg")
+    print(f"  matched {int(keep.sum())} pose(s) over {high - low:.1f} s, yaw alignment {yaw:+.2f} deg"
+          + (f", scale {scale:.4g}" if args.align_scale else ""))
     print(f"  RMS 3D {np.sqrt((error ** 2).mean()):.4f} m   (median {np.median(error):.4f}, "
           f"median {np.median(error):.4f}, max {error.max():.4f})")
     print(f"  RMS 2D {np.sqrt((error_2d ** 2).mean()):.4f} m")

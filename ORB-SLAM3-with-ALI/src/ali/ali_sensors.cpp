@@ -6,6 +6,7 @@
 
 #include "common/log.h"
 
+#include <opencv2/core.hpp>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 
@@ -475,6 +476,29 @@ static bool bagFrameAt(const std::string& bag, const std::string& topic, std::si
   return true;
 }
 
+
+/// Optional image-noise realization shared by the ALI experiment.  The seed is per
+/// (configuration seed, frame stamp), so a given seed reproduces the same noise for every arm.
+void addExperimentNoise(cv::Mat *image, double stamp) {
+  static const double sigma = []() {
+    const char *s = std::getenv("OV_NOISE");
+    return s ? std::atof(s) : 0.0;
+  }();
+  if (sigma <= 0.0 || image == nullptr || image->empty()) return;
+  static const unsigned base_seed = []() {
+    const char *s = std::getenv("OV_SEED");
+    return (unsigned)(s ? std::atoi(s) : 0) * 7919u;
+  }();
+  const unsigned seed = base_seed + (unsigned)std::llround(stamp * 1000.0);
+  cv::Mat noise(image->size(), CV_16S);
+  cv::RNG rng(seed);
+  rng.fill(noise, cv::RNG::NORMAL, 0.0, sigma);
+  cv::Mat wide;
+  image->convertTo(wide, CV_16S);
+  wide += noise;
+  wide.convertTo(*image, CV_8U);
+}
+
 bool readFrame(const Conf& conf, const FrameRef& frame, cv::Mat* image, std::string* error) {
   if (frame.bag_index >= 0) {
     // A bag frame is fetched on its own so that a run which steps forward does not re-walk the file.  The
@@ -516,12 +540,14 @@ bool readFrame(const Conf& conf, const FrameRef& frame, cv::Mat* image, std::str
     if (image->empty() && error != nullptr) {
       *error = "the bag's message at index " + std::to_string(frame.bag_index) + " did not decode";
     }
+    addExperimentNoise(image, frame.stamp);
     return !image->empty();
   }
   *image = cv::imread(frame.path, cv::IMREAD_GRAYSCALE);
   if (image->empty() && error != nullptr) {
     *error = "cannot read " + frame.path;
   }
+  addExperimentNoise(image, frame.stamp);
   return !image->empty();
 }
 

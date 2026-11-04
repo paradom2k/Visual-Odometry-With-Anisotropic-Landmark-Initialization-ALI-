@@ -1,0 +1,40 @@
+%YAML:1.0
+# Camera calibration for the GICI open dataset, in the format ov_core::YamlParser reads for
+# `relative_config_imucam`.
+#
+# Provenance: intrinsics_and_extrinsics.yaml in the dataset root, which covers every scenario
+# (one rig; the file is not per recording).
+#   intrinsics        <- image_width/height 752x480, intrinsics data [510.12091726559544,
+#                        509.55338413343736, 357.48596105253193, 240.00309579253124] as fx, fy, cx, cy
+#   distortion_coeffs <- distortion data [-0.36472323465957157, 0.11530151924890532,
+#                        0.0006024586154990503, 0.0020184970860498133] as k1, k2, p1, p2
+#                        (type "radial-tangential", i.e. OpenCV radtan)
+#   T_imu_cam         <- T_I_C, "Transform of camera (C) in IMU (I) frame", as written
+#
+# Two differences from the 4Seasons calibration, both deliberate.
+#
+# 1. The distortion is NOT zero here.  The GICI frames are the raw lens images (our own slicing of
+#    camera.bin, and the dataset's own PNGs, both carry the distortion), so the coefficients belong
+#    in the calibration and the estimator undistorts internally.  The 4Seasons streams ship already
+#    undistorted, which is why those files carry zeros.
+#
+# 2. T_imu_cam is used as written rather than inverted.  On 4Seasons the key's name and its value
+#    disagreed and measurement settled it (the inverse was 3.9x better); here T_I_C is documented as
+#    the pose of the camera in the IMU frame, which is what the key asks for, and there is no
+#    measurement yet to overrule it -- the GICI closed loop needs the IMU stream, see
+#    openvins_gici_note.txt.  Treat the sign of this transform as unverified until then.
+
+cam0:
+  camera_model: pinhole
+  distortion_model: radtan
+  intrinsics: [510.12091726559544, 509.55338413343736, 357.48596105253193, 240.00309579253124]
+  distortion_coeffs: [-0.36472323465957157, 0.11530151924890532, 0.0006024586154990503, 0.0020184970860498133]
+  resolution: [752, 480]
+  timeshift_cam_imu: 0.0
+  T_imu_cam:
+    - [0.0134381210697455122, -0.999901594987671172, -0.00402706384669154413, -0.0229793554058591656]
+    - [0.999907681540912807, 0.0134460859659659704, -0.00195733688253543802, 0.0110786309679912626]
+    - [0.00201129251744842832, -0.00400038914436078377, 0.99998997574430859, 0.025008868367930974]
+    - [0.0000000000000000000, 0.0000000000000000000, 0.0000000000000000000, 1.0000000000000000000]
+  cam_overlaps: []
+  rostopic: /camera/image_raw

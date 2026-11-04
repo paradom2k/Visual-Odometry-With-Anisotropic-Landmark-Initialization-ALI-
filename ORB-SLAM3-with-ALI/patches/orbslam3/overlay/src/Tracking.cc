@@ -3237,7 +3237,7 @@ bool Tracking::TrackLocalMap()
                 inliers = Optimizer::PoseInertialOptimizationLastKeyFrame(&mCurrentFrame); // , !mpLastKeyFrame->GetMap()->GetIniertialBA1());
             }
 
-            if((mSensor == System::IMU_STEREO || mSensor == System::IMU_RGBD) &&
+            if((mSensor == System::IMU_STEREO || mSensor == System::IMU_RGBD || mSensor == System::IMU_MONOCULAR) &&
                (inliers < 50 || (aux1 >= 30 && inliers * 3 < aux1)))
             {
                 static long sFallbacks = 0;
