@@ -1,6 +1,6 @@
 # ALI-VINS
 
-**ALI-VINS** 采用 OpenVINS 的 KLT 跟踪和 MSCKF + SLAM 估计设计，检测器使用 GFTT（block-wise Shi--Tomasi），并在 landmark 初始化阶段使用 ALI（Anisotropic Landmark Initialization）。项目保留轻量的 Win32 UI，形成一个独立的视觉惯性里程计实现。
+**ALI-VINS** 采用 OpenVINS 的 KLT 跟踪和 SLAM 估计设计，检测器使用 GFTT（block-wise Shi--Tomasi），并在 landmark 初始化阶段使用 ALI（Anisotropic Landmark Initialization）。项目保留轻量的 Win32 UI，形成一个独立的视觉惯性里程计实现。
 
 ## 目录
 
