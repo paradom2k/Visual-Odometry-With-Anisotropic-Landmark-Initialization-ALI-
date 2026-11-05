@@ -15,35 +15,6 @@ anisotropic covariance.  A keypoint on an edge is trusted across the edge and
 distrusted along it, instead of being treated as equally precise in both image
 directions.
 
-## VINS-Mono with ALI
-
-`vins-mono-with-ALI/` is a ROS-free MSVC port of VINS-Mono (GPL-3.0).  Stock
-VINS-Mono whitens every projection factor with $f/1.5\,I$; at a new feature's
-first observation the port computes the structure tensor, its eigendecomposition
-and the scene reference $\bar\lambda_2$, and uses
-
-$$
-\mathrm{sqrt\_info}_i=\frac{f}{\sigma_{\mathrm{pix}}}C_i^{-1/2}
-$$
-
-only for the first reprojection after the feature's start frame.  Later
-observations keep the stock weight, so ALI acts as an initialization
-covariance rather than a permanent reweighting.  The same MSVC/CMake/OpenCV/
-Eigen/Ceres/Boost toolchain and Win32 UI as `ALI-VINS` are used.
-
-Ten-seed Monte Carlo (`OV_NOISE=2`), mean ATE over common non-divergent seeds:
-
-| Sequence | VINS-Mono | VINS-Mono + ALI | $p$ |
-|---|---:|---:|---:|
-| 4Seasons neighborhood_3 | 10.81 m | 11.59 m | 0.232 |
-| 4Seasons office_loop_5 | 23.12 m | 22.39 m | 1.000 |
-| GREAT campus03 | 2.76 m | 2.58 m | 0.432 |
-| GREAT campus01 | 16.56 m | 14.17 m | 0.375 |
-
-The GICI rows are omitted because fewer than five paired non-divergent seeds
-remain.  Detailed build/run instructions and the full six-sequence table are
-in `vins-mono-with-ALI/README.md`.
-
 ## Repository layout
 
 ```text

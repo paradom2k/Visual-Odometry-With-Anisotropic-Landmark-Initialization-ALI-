@@ -105,22 +105,6 @@ undistorted/rectified.
 The runner generates the ORB-SLAM3 YAML settings file from this (`sol/settings.yaml`), so the
 camera-model names, `T\_b\_c1` layout and distortion scaling are written once, in one place.
 
-## Monte Carlo on the four stereo sequences
-
-`系统实验/run_orb_mc.py` runs both arms with `OV_NOISE=2` and seeds 1--10.  Mean ATE over the
-common non-divergent seeds:
-
-| Sequence | ORB-SLAM3 | ORB-SLAM3 + ALI | $p$ |
-|---|---:|---:|---:|
-| 4Seasons neighborhood\_3 | 4.57 m | 4.59 m | 0.770 |
-| 4Seasons office\_loop\_5 | 3.44 m | 3.29 m | 0.625 |
-| GREAT campus03 | 5.80 m | 5.26 m | 0.375 |
-| GREAT campus01 | 11.73 m | 12.22 m | 0.922 |
-
-All runs kept one map.  GICI has only one camera; the monocular ORB front end did not produce a
-convergent metric trajectory there and those cells are omitted.  The changes are not significant
-at ten seeds.
-
 ## What ALI changes, exactly
 
 Each keypoint's patch gives a structure tensor `J = sum \[Ix², IxIy; IxIy, Iy²]`.  Its inverse is the

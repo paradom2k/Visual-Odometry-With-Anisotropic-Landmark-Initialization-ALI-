@@ -90,27 +90,6 @@ bin\vins_run.exe --config config\vins_campus01_ali.yaml ^
   --out sol\run.txt --frames 6000
 ```
 
-## 10-seed Monte Carlo
-
-`系统实验/run_vins_mc.py` runs both arms with `OV_NOISE=2` and seeds 1-10.  The table reports the
-mean ATE over the common non-divergent seeds:
-
-| Sequence | VINS-Mono | VINS-Mono + ALI | p | n |
-|---|---:|---:|---:|---:|
-| 4Seasons neighborhood_3 | 10.81 m | 11.59 m | 0.232 | 10 |
-| 4Seasons office_loop_5 | 23.12 m | 22.39 m | 1.000 | 10 |
-| GICI 1.1 | — | — | — | 3 |
-| GICI 2.1 | — | — | — | 0 |
-| GREAT campus03 | 2.76 m | 2.58 m | 0.432 | 10 |
-| GREAT campus01 | 16.56 m | 14.17 m | 0.375 | 10 |
-
-The four 4Seasons/campus sequences are stable for all ten seeds.  VINS-Mono's GICI runs are much
-less stable (GICI 1.1: 5/10 and 4/10 divergent; GICI 2.1: 9/10 in each arm); only three paired seeds
-survive on GICI 1.1 and none on GICI 2.1, so both GICI rows are omitted from the comparison.  On the
-stable sequences ALI does not change the mean significantly; the largest change is campus01
-(16.56 to 14.17 m, p=0.375).  Runs are not bit-reproducible: repeat one seed with the same binary
-before drawing conclusions from a single trajectory.
-
 ## Licence
 
 GPL-3.0, as a derivative of VINS-Mono.  See `LICENSE` and the third-party notices.

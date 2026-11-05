@@ -100,30 +100,13 @@ ALI-VINS uses a **block-wise Shi-Tomasi (GFTT)** feature extractor:
 * The ROI mask uses 255 for valid pixels; the code applies `bitwise_not` to the internal mask to
   match the GFTT interface.
 * KLT tracking and the grid layout are unchanged; the detector is GFTT and ALI is used at landmark
-  initialization.  The per-frame feature cap is set by `max_features` in the `.conf` file (see the
-  next section).
+  initialization.  The per-frame feature cap is set by `max_features` in the `.conf` file.
 
 GFTT is the default; to switch back to FAST for an A/B comparison:
 
 ```bat
 set OV_DETECTOR=fast
 ```
-
-## Maximum features per frame
-
-The `.conf` files expose `max_features`.  The UI parses it and passes it to the driver as
-`--max-features`; the driver overrides only the estimator's `num_pts` (the post-initialization
-per-frame cap) and leaves `init_max_features` at the YAML value of 200, so the dynamic
-initialization behavior is unchanged.  Both current configurations use `max_features = 600`.
-
-GFTT cap sweep on the first 2000 frames of neighborhood_3:
-
-| max_features | 300 | 500 | 600 | 700 | 800 |
-|---|---:|---:|---:|---:|---:|
-| RMS 3D | 17.25 m | 7.22 m | **6.89 m** | 9.10 m | 15.26 m |
-
-600 is best; 500--600 is a plateau, while 700/800 are worse.  The number of tracked features grows
-with the cap as well: 300 -> 223, 500 -> 348, 600 -> 434, 800 -> 486 tracks at frame 2000.
 
 ## Dataset
 
