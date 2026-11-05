@@ -1,0 +1,58 @@
+%YAML:1.0
+
+model_type: PINHOLE
+camera_name: camera
+image_width: 1024
+image_height: 768
+distortion_parameters:
+   k1: 0
+   k2: 0
+   p1: 0
+   p2: 0
+projection_parameters:
+   fx: 1205.020806009649
+   fy: 1205.020806009649
+   cx: 528.1421089172363
+   cy: 399.66448974609375
+
+estimate_extrinsic: 0
+extrinsicRotation: !!opencv-matrix
+   rows: 3
+   cols: 3
+   dt: d
+   data: [ 0.999989189291, 0.002449984608, -0.003963121016, 0.003924736091, 0.015479414544, 0.999872707422, 0.002511017844, -0.999877618573, 0.015469679242 ]
+extrinsicTranslation: !!opencv-matrix
+   rows: 3
+   cols: 1
+   dt: d
+   data: [-0.153256, 0.195995, 0.0534916]
+
+max_cnt: 150
+min_dist: 30
+freq: 10
+F_threshold: 1.0
+show_track: 0
+equalize: 1
+fisheye: 0
+
+max_solver_time: 0.04
+max_num_iterations: 8
+keyframe_parallax: 10.0
+
+acc_n: 0.089
+gyr_n: 0.0076
+acc_w: 0.0001
+gyr_w: 2e-06
+g_norm: 9.794
+
+estimate_td: 0
+td: 0.0
+rolling_shutter: 0
+rolling_shutter_tr: 0.0
+
+ali: 0
+ali_window: 15
+ali_sigma: 1.5
+ali_clip_lo: 0.25
+ali_clip_hi: 4.0
+ali_ref_alpha: 0.005

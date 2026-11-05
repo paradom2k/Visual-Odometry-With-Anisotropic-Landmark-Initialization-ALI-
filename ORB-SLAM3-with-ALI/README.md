@@ -1,7 +1,7 @@
 # ali-orbslam3
 
 ORB-SLAM3 with **Anisotropic Landmark Initialization (ALI)**, built for Windows with MSVC, driven by a
-single configuration file, and evaluated on two 4Seasons driving recordings.
+single configuration file, and evaluated on four stereo sequences: two 4Seasons recordings and two GREAT campus recordings.
 
 ORB-SLAM3 triangulates a new map point from two matched keypoints with an unweighted midpoint/SVD
 estimate, which treats both observations as equally precise in both image directions.  ALI gives every
@@ -26,7 +26,7 @@ src/common/               logging, time, geodesy
 src/data/bag\_reader.\*     ROS-free ROS1 bag reader (optional input path)
 src/compat/orbslam3/      the Windows/POSIX/Pangolin/Boost stand-ins
 
-conf/                     one configuration per sequence, plus the two references and an ALI variant
+conf/                     one configuration per sequence, plus references and an ALI variant
 tools/gauge\_free\_score.py the scorer every number above comes from
 bin/                      the built executables and the OpenCV runtime DLLs they need
 ```
@@ -77,8 +77,16 @@ python tools\\gauge\_free\_score.py --est sol\\4seasons\_neighborhood\_3.txt ^
 ```
 
 The configurations name the dataset by **absolute path**, because the recordings live outside the
-repository.  Edit `images\_dir`, `images\_right\_dir` and `imu` before running; `--check-only` prints every
-resolved path and refuses a configuration with a missing required key.
+repository.  Edit `images\_dir`, `images\_right\_dir` (or `bag`/`topic`/`right\_topic`) and `imu` before
+running; `--check-only` prints every resolved path and refuses a configuration with a missing required
+key.
+
+The GREAT campus stereo configs read the `stereo_bags` directly.  Those bags ship GIO-format
+`left.idx`/`right.idx` sidecars; ORB-SLAM3 expects its own `# ali stereo bag index v1` header with the
+same `stamp bag index` body, so the originals are kept as `left.gio.idx` and `right.gio.idx` beside the
+bags.  The campus camera intrinsics, `T_bc` and the -0.02 s IMU shift are from
+`E:/jo_gvil/recover_jo/GIO_GVIL_1.0/conf/great_campus0{1,3}_gvil.conf`; the images are already
+undistorted/rectified.
 
 ### The configuration file
 
@@ -96,6 +104,22 @@ resolved path and refuses a configuration with a missing required key.
 
 The runner generates the ORB-SLAM3 YAML settings file from this (`sol/settings.yaml`), so the
 camera-model names, `T\_b\_c1` layout and distortion scaling are written once, in one place.
+
+## Monte Carlo on the four stereo sequences
+
+`系统实验/run_orb_mc.py` runs both arms with `OV_NOISE=2` and seeds 1--10.  Mean ATE over the
+common non-divergent seeds:
+
+| Sequence | ORB-SLAM3 | ORB-SLAM3 + ALI | $p$ |
+|---|---:|---:|---:|
+| 4Seasons neighborhood\_3 | 4.57 m | 4.59 m | 0.770 |
+| 4Seasons office\_loop\_5 | 3.44 m | 3.29 m | 0.625 |
+| GREAT campus03 | 5.80 m | 5.26 m | 0.375 |
+| GREAT campus01 | 11.73 m | 12.22 m | 0.922 |
+
+All runs kept one map.  GICI has only one camera; the monocular ORB front end did not produce a
+convergent metric trajectory there and those cells are omitted.  The changes are not significant
+at ten seeds.
 
 ## What ALI changes, exactly
 

@@ -9,6 +9,10 @@ that is missing a required key; `ali_ui` lists the directory.
 | `4seasons_neighborhood_3_ali.conf` | the same | mono-inertial | **on** |
 | `4seasons_office_loop_5.conf` | office_loop_5, 13746 frames | mono-inertial | off |
 | `4seasons_office_loop_5_ali.conf` | the same | mono-inertial | **on** |
+| `campus03_bag_stereo.conf` | GREAT campus03, stereo_bags | stereo-inertial | off |
+| `campus03_bag_stereo_ali.conf` | the same | stereo-inertial | **on** |
+| `campus01_bag_stereo.conf` | GREAT campus01, stereo_bags | stereo-inertial | off |
+| `campus01_bag_stereo_ali.conf` | the same | stereo-inertial | **on** |
 
 **Edit the two input paths before running.**  They are absolute because the recordings are not part of
 this repository:

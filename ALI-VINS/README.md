@@ -1,119 +1,144 @@
 # ALI-VINS
 
-**ALI-VINS** 采用 OpenVINS 的 KLT 跟踪和 SLAM 估计设计，检测器使用 GFTT（block-wise Shi--Tomasi），并在 landmark 初始化阶段使用 ALI（Anisotropic Landmark Initialization）。项目保留轻量的 Win32 UI，形成一个独立的视觉惯性里程计实现。
+**ALI-VINS** follows the KLT tracking and SLAM estimator design of OpenVINS, uses GFTT
+(block-wise Shi--Tomasi) detection, and applies ALI (Anisotropic Landmark Initialization) at
+landmark initialization.  It keeps a lightweight Win32 UI and is a standalone visual-inertial
+odometry implementation.
 
-## 目录
+## Layout
 
-```
+```text
 ALI-VINS/
-  CMakeLists.txt          CMake 工程
-  build\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_msvc.bat          使用 E:\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\jo\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_gvil\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\visual studio 的 MSVC 和 E:\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\jo\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_gvil\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\cmake 构建
-  cmake/openvins.cmake    OpenVINS 源码子集、依赖路径和链接项
+  CMakeLists.txt          CMake project
+  build_msvc.bat          builds with MSVC from E:\jo_gvil\visual studio and CMake from E:\jo_gvil\cmake
+  cmake/openvins.cmake    OpenVINS source subset, dependency paths and link items
   src/
-    app\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_main.cpp          原有 Win32 UI / --list / --run / --plot / --compare
-    ali\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_vins\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_run.cpp      driver：manifest + IMU -> VioManager -> 轨迹
-  thirdparty/openvins/    ov\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_core + ov\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_init + ov\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_msckf（无 ROS，无 ArUco）
+    app_main.cpp          Win32 UI / --list / --run / --plot / --compare
+    ali_vins_run.cpp      driver: manifest + IMU -> VioManager -> trajectory
+  thirdparty/openvins/    ov_core + ov_init + ov_msckf (no ROS, no ArUco)
   config/
-    4seasons\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_neighborhood\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_3.conf
-    4seasons\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_office\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_loop\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_5.conf
-    openvins\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_4seasons.yaml / \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_calib.yaml / \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_imu.yaml
-    openvins\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_4seasons\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_office.yaml / \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_office\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_calib.yaml
-    data/                 两个序列的 manifest 与 reference
+    4seasons_neighborhood_3.conf
+    4seasons_office_loop_5.conf
+    openvins_4seasons.yaml / _calib.yaml / _imu.yaml
+    openvins_4seasons_office.yaml / _office_calib.yaml
+    data/                 manifests and references for the two sequences
   tools/
-    gauge\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_free\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_score.py   UI 使用的 ATE 打分器
-    bag\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_extract.py, bag\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_inspect.py, make\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_manifests.py
-  bin/                    构建产物和运行期 DLL
-  sol/                    轨迹、日志、score
+    gauge_free_score.py   ATE scorer used by the UI
+    bag_extract.py, bag_inspect.py, make_manifests.py
+  bin/                    build outputs and runtime DLLs
+  sol/                    trajectories, logs and scores
 ```
 
-## 构建
+## Build
 
 ```bat
-build\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_msvc.bat
+build_msvc.bat
 ```
 
-需要以下依赖：
+The build requires:
 
-|依赖|版本/说明|
-|-|-|
-|CMake|3.20 或更新|
-|Ninja|任意近期版本|
-|MSVC|Visual Studio 2022 / MSVC 19.44|
-|Windows SDK|10.0.26100.0|
-|OpenCV|4.6.0|
-|Eigen|3.3.5|
-|Ceres|1.14.0|
-|Boost|1.92.0|
+| Dependency | Version / note |
+|---|---|
+| CMake | 3.20 or newer |
+| Ninja | any recent version |
+| MSVC | Visual Studio 2022 / MSVC 19.44 |
+| Windows SDK | 10.0.26100.0 |
+| OpenCV | 4.6.0 |
+| Eigen | 3.3.5 |
+| Ceres | 1.14.0 |
+| Boost | 1.92.0 |
 
-四个依赖根都可以通过参数覆盖：`build\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_msvc.bat \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\[OpenCV] \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\[Eigen] \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\[Ceres] \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\[Boost] \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\[jobs]`。
-
-## 运行
-
-GUI：
+All four dependency roots can be overridden:
 
 ```bat
-bin\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\ali\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_vins\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_app.exe
+build_msvc.bat [OpenCV] [Eigen] [Ceres] [Boost] [jobs]
 ```
 
-Headless：
+## Run
+
+GUI:
 
 ```bat
-bin\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\ali\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_vins\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_app.exe --list
-bin\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\ali\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_vins\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_app.exe --run 4seasons\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_neighborhood\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_3
-bin\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\ali\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_vins\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_app.exe --run 4seasons\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_office\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_loop\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_5
+bin\ali_vins_app.exe
 ```
 
-`--frames N` 可以覆盖配置里的帧数；`--no-score` 跳过打分。
-
-## ALI 与 MSCKF/SLAM 设计
-
-* 实验配置都有 `max\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_slam: 50`、`max\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_slam\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_in\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_update: 25`、`dt\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_slam\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_delay: 1`、`feat\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_rep\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_slam: ANCHORED\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_MSCKF\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_INVERSE\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_DEPTH`。该估计器没有 `use\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_slam` 开关，`max\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_slam > 0` 就是 SLAM 分支的开关；MSCKF 仍然同时运行。
-* ALI 由 driver 默认设置 `OV\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_WEIGHT=l2cov` 开启。要跑无加权 baseline，在启动前设置空值：
+Headless:
 
 ```bat
-set OV\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_WEIGHT=
-bin\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\ali\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_vins\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_run.exe ...
+bin\ali_vins_app.exe --list
+bin\ali_vins_app.exe --run 4seasons_neighborhood_3
+bin\ali_vins_app.exe --run 4seasons_office_loop_5
 ```
 
-* ALI 的唯一实现改动是在 `ov\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_msckf/src/update/UpdaterSLAM.cpp` 的 `delayed\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_init`：把整块 `R` 的稠密 LLT 改成按 2×2 测量块逐块白化。`R` 本来就是块对角的，数学等价；1000 帧上与原实现的最大位置差为 `1.2e-6 m`，但 2000 帧从 \~240 s 降到 \~86 s。
+`--frames N` overrides the frame count in the configuration; `--no-score` skips scoring.
 
-## 特征提取器
+## ALI and the MSCKF/SLAM design
 
-ALI-VINS 使用  **block-wise Shi-Tomasi (GFTT)** 特征提取器：
-
-* 每个网格单元调用 `cv::goodFeaturesToTrack`，`qualityLevel = 0.01`，`minDistance = min\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_px\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_dist`（当前配置为 15），然后继续使用亚像素细化。
-* ROI mask 采用 255=有效区域；代码对内部 mask 做 `bitwise\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_not`，以适配 GFTT 接口。
-* KLT 跟踪和网格布局保持不变；检测器使用 GFTT；ALI 用于 landmark 初始化。每帧最大特征数由 `.conf` 的 `max\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_features` 控制（见下一节）。
-
-默认 GFTT；要回到 FAST 做 A/B，设置：
+* The experiment configurations use `max_slam: 50`, `max_slam_in_update: 25`,
+  `dt_slam_delay: 1`, and `feat_rep_slam: ANCHORED_MSCKF_INVERSE_DEPTH`.  The estimator has no
+  `use_slam` switch: `max_slam > 0` enables the SLAM branch, while MSCKF still runs in parallel.
+* The driver enables ALI by default with `OV_WEIGHT=l2cov`.  To run the unweighted baseline,
+  clear the variable before starting:
 
 ```bat
-set OV\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_DETECTOR=fast
+set OV_WEIGHT=
+bin\ali_vins_run.exe ...
 ```
 
-## 每帧最大特征数
+* The only ALI implementation change is in `delayed_init` in
+  `ov_msckf/src/update/UpdaterSLAM.cpp`: the dense LLT of the full `R` is replaced by block-wise
+  whitening of each 2x2 measurement block.  `R` is block diagonal, so the two forms are
+  mathematically equivalent; the maximum position difference over 1000 frames is `1.2e-6 m`, while
+  a 2000-frame run drops from about 240 s to about 86 s.
 
-`.conf` 新增 `max\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_features`。UI 解析后通过 `--max-features` 传给 driver；driver 只覆盖估计器的 `num\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_pts`（初始化完成后的每帧上限），`init\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_max\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_features` 仍保持 YAML 的 200，避免把动态初始化行为一起改掉。当前两个 conf 已设为 `max\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_features = 600`。
+## Feature extractor
 
-GFTT 下 neighborhood\_3 前 2000 帧的上限筛选：
+ALI-VINS uses a **block-wise Shi-Tomasi (GFTT)** feature extractor:
 
-|max\_features|300|500|600|700|800|
-|-|-:|-:|-:|-:|-:|
-|RMS 3D|17.25 m|7.22 m|**6.89 m**|9.10 m|15.26 m|
+* Each grid cell calls `cv::goodFeaturesToTrack` with `qualityLevel = 0.01` and
+  `minDistance = min_px_dist` (15 in the current configuration), followed by sub-pixel refinement.
+* The ROI mask uses 255 for valid pixels; the code applies `bitwise_not` to the internal mask to
+  match the GFTT interface.
+* KLT tracking and the grid layout are unchanged; the detector is GFTT and ALI is used at landmark
+  initialization.  The per-frame feature cap is set by `max_features` in the `.conf` file (see the
+  next section).
 
-600 最好；500–600 是平台区，700/800 反而变差。实际跟踪数也随上限增长：300→223、500→348、600→434、800→486 条（第 2000 帧）。
+GFTT is the default; to switch back to FAST for an A/B comparison:
 
-## 数据集
+```bat
+set OV_DETECTOR=fast
+```
 
-4Seasons 数据集请从官方页面下载：
+## Maximum features per frame
+
+The `.conf` files expose `max_features`.  The UI parses it and passes it to the driver as
+`--max-features`; the driver overrides only the estimator's `num_pts` (the post-initialization
+per-frame cap) and leaves `init_max_features` at the YAML value of 200, so the dynamic
+initialization behavior is unchanged.  Both current configurations use `max_features = 600`.
+
+GFTT cap sweep on the first 2000 frames of neighborhood_3:
+
+| max_features | 300 | 500 | 600 | 700 | 800 |
+|---|---:|---:|---:|---:|---:|
+| RMS 3D | 17.25 m | 7.22 m | **6.89 m** | 9.10 m | 15.26 m |
+
+600 is best; 500--600 is a plateau, while 700/800 are worse.  The number of tracked features grows
+with the cap as well: 300 -> 223, 500 -> 348, 600 -> 434, 800 -> 486 tracks at frame 2000.
+
+## Dataset
+
+Download 4Seasons from the official page:
 
 https://cvg.cit.tum.de/data/datasets/4seasons-dataset/download
 
-本文使用 `neighborhood\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_3` 和 `office\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_loop\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_5` 两个 recording。下载后请按 `config/` 中的配置文件准备/更新 manifest、IMU 和 reference；仓库不包含原始图像、IMU 或 groundtruth。
+This project uses the `neighborhood_3` and `office_loop_5` recordings.  After downloading, prepare
+or update the manifest, IMU stream and reference files according to the configurations in
+`config/`; the repository does not contain the raw images, IMU data or ground truth.
 
-## 说明
+## Notes
 
-* 这是 ALI-VINS 的最小实现，复用了 ROS-free 的 `ov\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_core + ov\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_init + ov\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_msckf`；未引入 ROS、PCL、Pangolin、g2o、Sophus。
-* `CpiV2.cpp` 未编译：动态初始化只用 `CpiV1`，保留它只会多一个非常慢的编译单元。
-* OpenVINS 上游是 GPLv3；对外分发时需保留 `thirdparty/openvins/LICENSE`。
-
+* This is a minimal ALI-VINS implementation built on the ROS-free `ov_core + ov_init + ov_msckf`
+  subset; it does not use ROS, PCL, Pangolin, g2o or Sophus.
+* `CpiV2.cpp` is not compiled: dynamic initialization uses only `CpiV1`, and keeping the second
+  unit would add a very slow compilation unit.
+* OpenVINS is GPLv3; keep `thirdparty/openvins/LICENSE` when redistributing.
